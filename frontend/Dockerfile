@@ -21,10 +21,19 @@ RUN npm run build
 FROM node:22-alpine AS runner
 WORKDIR /app
 
+ARG GIT_COMMIT_SHA=dev
+ARG BUILD_NUMBER=local
+
+LABEL org.opencontainers.image.title="flix-frontend" \
+      org.opencontainers.image.source="https://github.com/kevincifuentesdev/flix" \
+      org.opencontainers.image.revision="${GIT_COMMIT_SHA}"
+
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=5173
 ENV HOSTNAME=0.0.0.0
+ENV GIT_COMMIT_SHA=${GIT_COMMIT_SHA}
+ENV BUILD_NUMBER=${BUILD_NUMBER}
 
 RUN addgroup --system --gid 1001 nodejs \
  && adduser --system --uid 1001 nextjs

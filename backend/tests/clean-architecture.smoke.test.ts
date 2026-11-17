@@ -775,10 +775,23 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
     };
 
     try {
-      // 1. Health check
+      // 1. Health check and build traceability metadata
       const healthRes = await fetch(`${baseUrl}/`);
       assert.equal(healthRes.status, 200);
       assert.equal(await healthRes.text(), "Flix Backend OK");
+
+      const readinessRes = await fetch(`${baseUrl}/health`);
+      assert.equal(readinessRes.status, 200);
+      const readinessBody = (await readinessRes.json()) as {
+        status: string;
+        service: string;
+        commitSha: string;
+        buildNumber: string;
+      };
+      assert.equal(readinessBody.status, "ok");
+      assert.equal(readinessBody.service, "flix-backend");
+      assert.equal(typeof readinessBody.commitSha, "string");
+      assert.equal(typeof readinessBody.buildNumber, "string");
 
       // 2. Unauthorized guard on protected routes
       const unauthRes = await fetch(`${baseUrl}/api/profile/me`);

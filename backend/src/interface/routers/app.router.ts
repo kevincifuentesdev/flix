@@ -91,6 +91,15 @@ export function createApp(
     res.send("Flix Backend OK");
   });
 
+  app.get("/health", (_req: Request, res: Response) => {
+    res.json({
+      status: "ok",
+      service: "flix-backend",
+      commitSha: process.env.GIT_COMMIT_SHA || "dev",
+      buildNumber: process.env.BUILD_NUMBER || "local",
+    });
+  });
+
   app.get(DEFAULT_AVATAR_PATH, (_req: Request, res: Response) => {
     res
       .type("image/svg+xml")
