@@ -1,4 +1,4 @@
-# Flix — Frontend (Plataforma de Streaming de Películas y Series)
+# Flix: Frontend (Plataforma de Streaming de Películas y Series)
 
 Aplicación web frontend de **Flix**, una plataforma full-stack de streaming y descubrimiento de películas y series desarrollada como Proyecto de Aula de Desarrollo Web Full-Stack (2026-2). Construida con **Next.js (App Router)**, **React**, **TypeScript** y **Tailwind CSS** bajo una arquitectura limpia organizada por *features*.
 
@@ -26,8 +26,8 @@ Se conecta a la API REST del [backend de Flix](https://flix-backend-six.vercel.a
 
 | Elemento | Plataforma | Enlace |
 | --- | --- | --- |
-| **Frontend desplegado (Producción)** | Vercel | `[https://flix-frontend-nine.vercel.app/]` |
-| **Backend / API desplegada (Producción)** | Vercel / Cloud | `[https://flix-backend-six.vercel.app/]` |
+| **Frontend desplegado (Producción)** | Vercel | [https://flix-frontend-nine.vercel.app/](https://flix-frontend-nine.vercel.app/) |
+| **Backend / API desplegada (Producción)** | Vercel / Cloud | [https://flix-backend-six.vercel.app/](https://flix-backend-six.vercel.app/) |
 | **Repositorio Frontend** | GitHub | [https://github.com/KevinMateoG/flix-frontend](https://github.com/KevinMateoG/flix-frontend) |
 | **Repositorio Backend** | GitHub | [https://github.com/KevinMateoG/flix-backend](https://github.com/KevinMateoG/flix-backend) |
 

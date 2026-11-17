@@ -1,68 +1,87 @@
 # Flix
 
-Repositorio unificado (monorepo) del proyecto **Flix** — plataforma de streaming de películas y series. Integra en un solo lugar tanto la aplicación web (**Frontend**) como la API REST (**Backend**), junto con la configuración para bases de datos, contenedores Docker y pipelines de CI/CD.
+Repositorio unificado (monorepo) de la plataforma de streaming **Flix**. Centraliza el código del frontend web (`frontend/`), la API REST (`backend/`), la configuración de base de datos, los contenedores Docker y los pipelines de integración continua.
 
-- **Demo desplegada:** https://flix-murex-alpha.vercel.app
-- **Documentación específica por módulo:**
-  - Frontend: [`frontend/README.MD`](frontend/README.MD)
-  - Backend: [`backend/README.md`](backend/README.md)
-  - Especificación y referencia de la API: [`backend/api-docs/README.md`](backend/api-docs/README.md) / [`backend/api-docs/openapi.json`](backend/api-docs/openapi.json)
+- Demo desplegada: https://flix-murex-alpha.vercel.app
+- Documentación por módulo:
+  - Frontend: [frontend/README.MD](frontend/README.MD)
+  - Backend: [backend/README.md](backend/README.md)
+  - Especificación de la API: [backend/api-docs/README.md](backend/api-docs/README.md) y [backend/api-docs/openapi.json](backend/api-docs/openapi.json)
 
 ---
 
 ## Tabla de contenido
 
-1. [Arquitectura y tecnologías](#1-arquitectura-y-tecnologías)
+1. [Arquitectura y flujo de datos](#1-arquitectura-y-flujo-de-datos)
 2. [Estructura del repositorio](#2-estructura-del-repositorio)
-3. [Requisitos](#3-requisitos)
-4. [Cómo descargar el proyecto](#4-cómo-descargar-el-proyecto)
+3. [Topología Git y sincronización de subtrees](#3-topología-git-y-sincronización-de-subtrees)
+4. [Requisitos](#4-requisitos)
 5. [Variables de entorno](#5-variables-de-entorno)
 6. [Ejecución local (sin Docker)](#6-ejecución-local-sin-docker)
-7. [Ejecución con Docker](#7-ejecución-con-docker)
+7. [Ejecución con Docker Compose](#7-ejecución-con-docker-compose)
 8. [Base de datos, migraciones y datos semilla](#8-base-de-datos-migraciones-y-datos-semilla)
 9. [Scripts disponibles](#9-scripts-disponibles)
-10. [Pruebas end-to-end (Playwright)](#10-pruebas-end-to-end-playwright)
+10. [Pruebas automatizadas](#10-pruebas-automatizadas)
 11. [Integración continua (Jenkins)](#11-integración-continua-jenkins)
 12. [Documentación de la API](#12-documentación-de-la-api)
-13. [Repositorios relacionados](#13-repositorios-relacionados)
 
 ---
 
-## 1. Arquitectura y tecnologías
+## 1. Arquitectura y flujo de datos
 
-El proyecto se divide en dos aplicaciones principales que se comunican mediante HTTP y comparten servicios externos de metadatos ([TMDB](https://www.themoviedb.org/)) y streaming de video ([Mux](https://www.mux.com/)).
+Flix separa la presentación web (Next.js App Router) de la lógica de negocio y persistencia (Express + Drizzle ORM + PostgreSQL 17), apoyándose en servicios externos para metadatos de catálogo (TMDB), streaming HLS (Mux) y almacenamiento de avatares (S3).
 
-### 1.1. Frontend (`frontend/`)
+```mermaid
+flowchart LR
+  Browser["Navegador del usuario"] -->|"HTTP :5173"| Frontend["Frontend Next.js (App Router + proxy.ts)"]
+  Frontend -->|"Rewrite /api/* (excepto /api/search) y validación de sesión"| Backend["Backend Express :3000 (Clean Architecture)"]
+  Backend -->|"Drizzle ORM / pg :5432"| Postgres[("PostgreSQL 17")]
+  Backend -->|"Metadatos películas/series"| TMDB["API TMDB"]
+  Backend -->|"URLs firmadas HLS (.m3u8)"| Mux["Mux Video"]
+  Backend -->|"Carga y borrado de avatares"| S3["Bucket S3 (Neon Object Storage)"]
+  Frontend -->|"Consulta directa opcional de metadatos"| TMDB
+```
+
+### Flujos principales de datos
+
+1. **Autenticación y control de acceso:** El usuario inicia sesión o se registra desde `/login` o `/register`. `proxy.ts` reenvía las rutas `/api/auth/*` hacia el backend (`BACKEND`), donde `better-auth` valida credenciales contra las tablas `user`, `account` y `session` en PostgreSQL y emite la cookie `better-auth.session_token` (el backend también acepta `Authorization: Bearer <token>`). En cada navegación privada, `proxy.ts` consulta `/api/auth/get-session` antes de permitir el acceso y restringe `/admin` a cuentas con `role === 'admin'`.
+2. **Catálogo y metadatos:** El frontend consulta `/api/movies` (catálogo reproducible paginado y filtrado por región en PostgreSQL) y `/api/tmdb/*` (búsquedas, tendencias y fichas de películas/series combinadas con disponibilidad regional).
+3. **Reproducción de video:** Al abrir `/watch/[id]`, el backend verifica la sesión y la disponibilidad regional en `playable_content` y solicita a Mux la URL de stream HLS para el reproductor `@mux/mux-player-react`.
+4. **Persistencia de usuario (Mi Lista, historial, dislikes y perfil):** Las mutaciones sobre `/api/my-list`, `/api/watch-history`, `/api/dislikes` y `/api/profile` pasan por los casos de uso del backend y se persisten en PostgreSQL mediante repositorios Drizzle. La carga de avatar en `/api/profile/avatar` valida el archivo con `multer` (formato y tamaño máximo de 2 MB) y lo almacena en el bucket S3 configurado.
+
+### Tecnologías por módulo
+
+#### Frontend (`frontend/`)
 
 | Tecnología | Versión | Uso |
-| --- | --- | --- |
+| :--- | :--- | :--- |
 | Node.js | 22 (`node:22-alpine` / `node:22-bookworm`) | Entorno de ejecución |
 | Next.js | ^16.3.1 | Framework React (App Router, salida `standalone`) |
 | React / React DOM | 19.2.4 | Interfaz de usuario |
-| TypeScript | ^5 | Lenguaje |
-| Tailwind CSS | ^4 (`@tailwindcss/postcss`) | Estilos |
+| TypeScript | ^5 | Tipado estático |
+| Tailwind CSS | ^4 (`@tailwindcss/postcss`) | Sistema de estilos |
 | GSAP + @gsap/react | ^3.15.0 / ^2.1.2 | Animaciones |
-| Supabase (`supabase-js`, `@supabase/ssr`) | ^2.111.0 / ^0.12.3 | Base de datos y servicios adicionales |
-| better-auth | ^1.7.7 | Cliente de autenticación |
+| better-auth | ^1.7.7 | Cliente de autenticación y manejo de sesión |
 | Mux (`@mux/mux-player-react`, `@mux/mux-node`) | ^3.2.0 / ^8.8.0 | Reproducción de video |
-| lucide-react | ^1.26.0 | Iconos |
+| lucide-react | ^1.26.0 | Iconografía |
 | date-fns, clsx, tailwind-merge | ^4.1.0, ^2.1.1, ^3.6.0 | Utilidades |
 | ESLint / Prettier | ^9 / ^3.9.6 | Linter y formato de código |
-| Playwright | 1.52.0 (en CI) | Pruebas end-to-end |
+| Playwright | 1.52.0 (en CI) | Pruebas E2E |
 
-### 1.2. Backend (`backend/`)
+#### Backend (`backend/`)
 
 | Tecnología | Versión | Uso |
-| --- | --- | --- |
+| :--- | :--- | :--- |
 | Node.js | 22 (`node:22-alpine`) | Entorno de ejecución |
-| TypeScript | ^7.0.2 | Lenguaje (módulos ES, `"type": "module"`) |
-| Express | ^5.2.1 | Framework HTTP |
+| TypeScript | ^7.0.2 | Tipado estático (ES Modules) |
+| Express | ^5.2.1 | Servidor HTTP y enrutamiento |
 | PostgreSQL | 17 (`postgres:17-alpine`) | Base de datos relacional |
-| Drizzle ORM / Drizzle Kit | ^1.0.0-rc.4 | ORM, esquema y migraciones |
-| pg (node-postgres) | ^8.23.0 | Driver de PostgreSQL |
-| better-auth | ^1.7.5 | Servidor de autenticación |
-| @mux/mux-node | ^15.2.0 | Integración con Mux para video streaming |
-| swagger-ui-express | ^5.0.1 | Documentación interactiva OpenAPI 3.0 |
+| Drizzle ORM / Drizzle Kit | ^1.0.0-rc.4 | Esquema tipado, consultas y migraciones SQL |
+| pg | ^8.23.0 | Driver PostgreSQL |
+| better-auth | ^1.7.5 | Autenticación, sesiones y control de roles |
+| @aws-sdk/client-s3 / multer | ^3.1164.0 / ^2.5.0 | Subida de avatares a almacenamiento S3 |
+| @mux/mux-node | ^15.2.0 | Generación de streams HLS en Mux |
+| swagger-ui-express | ^5.0.1 | Interfaz Swagger OpenAPI 3.0 |
 | cors / dotenv | ^2.8.6 / ^18.0.1 | CORS y variables de entorno |
 | tsx / nodemon | ^4.23.13 / ^3.1.14 | Ejecución y recarga en desarrollo |
 
@@ -70,64 +89,72 @@ El proyecto se divide en dos aplicaciones principales que se comunican mediante 
 
 ## 2. Estructura del repositorio
 
-```
+```text
 flix/
-├── backend/                         # API REST con Express, Drizzle y PostgreSQL
+├── backend/
 │   ├── api-docs/                    # Especificación OpenAPI 3.0 y guía de endpoints
 │   ├── drizzle/                     # Migraciones SQL generadas por Drizzle Kit
-│   ├── scripts/                     # Scripts de migración automática y datos semilla (CSV)
-│   ├── src/                         # Código fuente del servidor (punto de entrada: src/index.ts)
+│   ├── scripts/                     # Migración automática, seed y archivos CSV
+│   ├── src/
+│   │   ├── domain/                  # Entidades, puertos de repositorio y almacenamiento
+│   │   ├── application/             # Casos de uso, paginación y errores de dominio
+│   │   ├── infrastructure/          # Adaptadores Drizzle, Better Auth, TMDB, Mux y S3
+│   │   ├── interface/               # Controladores, middlewares y routers Express
+│   │   └── index.ts                 # Inyección de dependencias y arranque del servidor
+│   ├── tests/                       # Smoke tests y contratos (node:test)
+│   ├── .env.example                 # Plantilla de variables de entorno del backend
 │   ├── Dockerfile                   # Imagen multi-stage del backend
-│   ├── drizzle.config.ts            # Configuración de Drizzle Kit
 │   ├── Jenkinsfile                  # Pipeline CI/CD del backend
+│   ├── drizzle.config.ts            # Configuración de Drizzle Kit
 │   └── package.json
 │
-├── frontend/                        # Aplicación web con Next.js (App Router)
-│   ├── app/                         # Rutas y páginas
-│   ├── components/                  # Componentes de interfaz de usuario
-│   ├── lib/                         # Clientes de API y utilidades
-│   ├── src/db/                      # Acceso a datos en el cliente/servidor
-│   ├── scripts/                     # Scripts de utilidad (p. ej. test-tmdb.ts)
-│   ├── supabase/migrations/         # Migraciones SQL de Supabase
-│   ├── tests/                       # Pruebas end-to-end con Playwright (smoke.spec.js)
+├── frontend/
+│   ├── app/                         # Rutas del App Router ((auth), (main), api/search)
+│   ├── src/features/                # Módulos por dominio (auth, catalog, admin, playback, etc.)
+│   ├── scripts/                     # Utilidad de verificación de TMDB
+│   ├── tests/                       # Pruebas Playwright (smoke.spec.js)
+│   ├── .env.example                 # Plantilla de variables de entorno del frontend
 │   ├── Dockerfile                   # Imagen multi-stage del frontend (standalone)
 │   ├── Jenkinsfile                  # Pipeline CI/CD del frontend
 │   ├── next.config.ts
 │   ├── playwright.config.js
+│   ├── proxy.ts                     # Proxy hacia /api/* y protección de rutas por sesión/rol
 │   └── package.json
 │
-├── docker-compose.dev.yml           # Configuración Docker Compose unificada (frontend + backend + db)
-└── README.md                        # Este archivo
+├── .gitignore                       # Reglas globales de exclusión en el monorepo
+├── docker-compose.dev.yml           # Stack local unificado (db, backend, frontend)
+└── README.md                        # Documentación principal del proyecto
 ```
 
 ---
 
-## 3. Requisitos
+## 3. Topología Git y sincronización de subtrees
 
-**Para ejecutar con Docker (recomendado):**
+El monorepo principal integra los repositorios independientes de backend y frontend mediante `git subtree`, manteniendo un historial unificado en la rama `main`.
 
-- [Docker](https://docs.docker.com/get-docker/) y Docker Compose v2 (`docker compose`).
-- Archivos `.env` configurados para el backend y el frontend (ver [sección 5](#5-variables-de-entorno)).
+| Remoto Git | Repositorio | Prefijo local | Propósito |
+| :--- | :--- | :--- | :--- |
+| `origin` | `git@github.com:kevincifuentesdev/flix.git` | `/` | Monorepo unificado de entrega |
+| `frontend` | `git@github.com:KevinMateoG/flix-frontend.git` | `frontend/` | Repositorio de desarrollo del frontend |
+| `backend` | `git@github.com:KevinMateoG/flix-backend.git` | `backend/` | Repositorio de desarrollo del backend |
 
-**Para ejecutar en local sin Docker:**
-
-- [Node.js 22](https://nodejs.org/) y npm.
-- Una instancia de [PostgreSQL 17](https://www.postgresql.org/download/) en ejecución.
-- Proyecto configurado en [Supabase](https://supabase.com/).
-- Credenciales de [TMDB](https://www.themoviedb.org/) y [Mux](https://www.mux.com/).
-
----
-
-## 4. Cómo descargar el proyecto
-
-### Opción A: clonar el monorepo
+### Clonar e integrar cambios remotos
 
 ```bash
+# 1. Clonar el monorepo
 git clone https://github.com/kevincifuentesdev/flix.git
 cd flix
+
+# 2. Registrar los remotos de cada módulo (si aún no existen en tu copia local)
+git remote add frontend git@github.com:KevinMateoG/flix-frontend.git
+git remote add backend git@github.com:KevinMateoG/flix-backend.git
+
+# 3. Descargar cambios desde cada repositorio remoto hacia su carpeta
+git subtree pull --prefix=frontend frontend main --squash
+git subtree pull --prefix=backend backend main --squash
 ```
 
-### Opción B: descargar las imágenes desde Docker Hub
+También puedes obtener las imágenes publicadas directamente desde Docker Hub:
 
 ```bash
 docker pull kevinmateog/flix-backend:latest
@@ -136,184 +163,132 @@ docker pull kevinmateog/flix-frontend:latest
 
 ---
 
+## 4. Requisitos
+
+Para ejecutar con Docker:
+
+- [Docker](https://docs.docker.com/get-docker/) y Docker Compose v2 (`docker compose`).
+- Archivos `backend/.env` y `frontend/.env` creados a partir de las plantillas `.env.example`.
+
+Para ejecutar en local sin Docker:
+
+- [Node.js 22](https://nodejs.org/) y npm.
+- Una instancia de [PostgreSQL 17](https://www.postgresql.org/download/) en ejecución.
+- Credenciales activas de [TMDB](https://www.themoviedb.org/), [Mux](https://www.mux.com/) y almacenamiento compatible con S3 para avatares.
+
+---
+
 ## 5. Variables de entorno
 
-Cada aplicación gestiona su propio archivo `.env` (`backend/.env` y `frontend/.env`). **Ninguno de los dos archivos debe subirse al repositorio.**
+Cada módulo usa su propio archivo `.env` (`backend/.env` y `frontend/.env`), excluidos del control de versiones mediante `.gitignore`. Copia las plantillas antes de iniciar:
 
-### 5.1. Backend (`backend/.env`)
-
-```env
-# Servidor
-PORT=3000
-FRONTEND_URL=http://localhost:5173
-BACKEND_URL=http://localhost:3000
-
-# Base de datos (para ejecución local sin Docker)
-DATABASE_URL=postgresql://usuario:contraseña@localhost:5432/flix
-
-# Autenticación (better-auth)
-BETTER_AUTH_URL=http://localhost:3000
-BETTER_AUTH_SECRET=<cadena-aleatoria-larga>
-
-# TMDB
-TMDB_API_KEY=<tu-api-key>
-TMDB_READ_ACCESS_TOKEN=<tu-token>
-
-# Mux
-MUX_TOKEN_ID=<tu-token-id>
-MUX_TOKEN_SECRET=<tu-token-secret>
-PUBLIC_MUX_PLAYBACK_DOMAIN=<dominio-de-reproducción>
-
-# PostgreSQL (usadas por docker-compose para crear la base de datos)
-POSTGRES_DB=flix
-POSTGRES_USER=flix_user
-POSTGRES_PASSWORD=<contraseña-segura>
+```bash
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
 ```
 
-| Variable | Descripción |
-| --- | --- |
-| `PORT` | Puerto en el que escucha la API (por defecto `3000`). |
-| `FRONTEND_URL` | URL del frontend (origen permitido por CORS). |
-| `BACKEND_URL` | URL pública del backend. |
-| `DATABASE_URL` | Cadena de conexión a PostgreSQL. Con Docker Compose se construye automáticamente a partir de `POSTGRES_*`. |
-| `BETTER_AUTH_URL` | URL base de better-auth (por defecto `http://localhost:3000`). |
-| `BETTER_AUTH_SECRET` | Secreto para firmar sesiones (puedes generarlo con `openssl rand -base64 32`). |
-| `BETTER_AUTH_TRUSTED_ORIGINS` | *(Opcional en Docker)* Orígenes confiables separados por coma (`http://localhost:5173,http://localhost:3000`). |
-| `TMDB_API_KEY` / `TMDB_READ_ACCESS_TOKEN` | Credenciales de la API de TMDB. |
-| `MUX_TOKEN_ID` / `MUX_TOKEN_SECRET` | Credenciales de la API de Mux. |
-| `PUBLIC_MUX_PLAYBACK_DOMAIN` | Dominio de reproducción de Mux. |
-| `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | Credenciales para el contenedor de PostgreSQL. |
-
-### 5.2. Frontend (`frontend/.env`)
-
-```env
-# Supabase
-NEXT_PUBLIC_SUPABASE_URL=<url-del-proyecto-supabase>
-NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon-key>
-
-# TMDB
-TMDB_API_KEY=<tu-api-key>
-TMDB_READ_ACCESS_TOKEN=<tu-token>
-TMDB_BASE_URL=https://api.themoviedb.org/3
-TMDB_IMAGE_BASE_URL=https://image.tmdb.org/t/p
-
-# Mux
-MUX_TOKEN_ID=<tu-token-id>
-MUX_TOKEN_SECRET=<tu-token-secret>
-NEXT_PUBLIC_MUX_PLAYBACK_DOMAIN=<dominio-de-reproducción>
-
-# Aplicación
-NEXT_PUBLIC_APP_URL=http://localhost:5173
-BACKEND=http://localhost:3000
-PORT=5173
-```
+### 5.1. Backend (`backend/.env.example`)
 
 | Variable | Descripción |
-| --- | --- |
-| `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` | URL y clave pública (`anon`) del proyecto en Supabase. |
+| :--- | :--- |
+| `PORT` | Puerto HTTP de la API (por defecto `3000`). |
+| `FRONTEND_URL` | URL del frontend autorizada en CORS (`http://localhost:5173`). |
+| `BACKEND_URL` | URL pública de la API (`http://localhost:3000`). |
+| `DATABASE_URL` | Cadena de conexión a PostgreSQL (en Docker Compose se sobrescribe hacia el servicio `db`). |
+| `BETTER_AUTH_URL` | URL base configurada en Better Auth (`http://localhost:3000`). |
+| `BETTER_AUTH_SECRET` | Secreto de al menos 32 bytes para firmar sesiones (`openssl rand -base64 32`). |
+| `BETTER_AUTH_TRUSTED_ORIGINS` | Orígenes permitidos separados por coma (`http://localhost:5173,http://localhost:3000`). |
+| `TMDB_BASE_URL` / `TMDB_IMAGE_BASE_URL` | URLs base de la API e imágenes de TMDB. |
 | `TMDB_API_KEY` / `TMDB_READ_ACCESS_TOKEN` | Credenciales de la API de TMDB. |
-| `TMDB_BASE_URL` / `TMDB_IMAGE_BASE_URL` | URL base de la API y de las imágenes de TMDB (`image.tmdb.org/t/p/**`). |
-| `MUX_TOKEN_ID` / `MUX_TOKEN_SECRET` | Credenciales de la API de Mux. |
-| `NEXT_PUBLIC_MUX_PLAYBACK_DOMAIN` | Dominio de reproducción de Mux. |
-| `NEXT_PUBLIC_APP_URL` | URL pública del frontend. |
-| `BACKEND` | URL del backend de Flix (`http://localhost:3000`). |
-| `PORT` | Puerto del servidor frontend (por defecto `5173`). |
+| `MUX_TOKEN_ID` / `MUX_TOKEN_SECRET` | Credenciales de Mux para generar reproducciones HLS. |
+| `PUBLIC_MUX_PLAYBACK_DOMAIN` | Dominio público de reproducción de Mux (`stream.mux.com`). |
+| `AWS_ENDPOINT_URL_S3` / `AWS_REGION` | Endpoint y región del bucket S3 compatible. |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Credenciales de acceso al bucket S3. |
+| `AVATARS_BUCKET` / `AVATARS_PUBLIC_BASE_URL` | Nombre del bucket público para avatares y URL base pública opcional. |
+| `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | Credenciales usadas por `docker-compose.dev.yml` para inicializar PostgreSQL. |
+
+### 5.2. Frontend (`frontend/.env.example`)
+
+| Variable | Descripción |
+| :--- | :--- |
+| `BACKEND` | URL interna/servidor del backend (`http://localhost:3000` en local; `http://backend:3000` en Docker Compose). |
+| `NEXT_PUBLIC_API_HOST` | Host alternativo de respaldo para la API (`http://localhost:3000`). |
+| `NEXT_PUBLIC_URL` | URL pública del frontend (`http://localhost:5173`). |
+| `PORT` | Puerto del servidor Next.js (por defecto `5173`). |
+| `TMDB_API_KEY` | Clave de API de TMDB. |
+| `TMDB_BASE_URL` / `TMDB_IMAGE_BASE_URL` | URLs base de la API e imágenes de TMDB. |
+| `NEXT_PUBLIC_MUX_PLAYBACK_DOMAIN` | Dominio de reproducción de Mux (`stream.mux.com`). |
+| `NEXT_PUBLIC_MUX_TEST_PLAYBACK_ID` | Playback ID de respaldo para pruebas. |
 
 ---
 
 ## 6. Ejecución local (sin Docker)
 
-Para levantar todo el entorno en desarrollo necesitarás dos terminales (una para el backend y otra para el frontend), además de tener PostgreSQL activo.
+Inicia el backend y el frontend en dos terminales separadas, con PostgreSQL activo previamente.
 
-### Paso 1: levantar el Backend
+### Paso 1: Backend
 
 ```bash
 cd backend
-
-# 1. Instalar dependencias
 npm ci
-
-# 2. Configurar backend/.env con DATABASE_URL apuntando a tu PostgreSQL
-
-# 3. Aplicar migraciones y (opcionalmente) datos semilla
 npx drizzle-kit migrate
 node scripts/seed-data.mjs
-
-# 4. Iniciar servidor en modo desarrollo (puerto 3000)
 npm run dev
 ```
 
-### Paso 2: levantar el Frontend
+### Paso 2: Frontend
 
 ```bash
 cd frontend
-
-# 1. Instalar dependencias
 npm ci
-
-# 2. Configurar frontend/.env con BACKEND=http://localhost:3000
-
-# 3. Iniciar servidor de desarrollo (puerto 5173)
 npm run dev
 ```
 
-- **Frontend:** `http://localhost:5173`
-- **Backend (API):** `http://localhost:3000`
-- **Swagger UI:** `http://localhost:3000/api-docs`
+Accesos locales:
+
+- Frontend: `http://localhost:5173`
+- Backend API: `http://localhost:3000`
+- Swagger UI: `http://localhost:3000/api-docs`
 
 ---
 
-## 7. Ejecución con Docker
+## 7. Ejecución con Docker Compose
 
-El repositorio centraliza la orquestación de contenedores en un único archivo [`docker-compose.dev.yml`](docker-compose.dev.yml) ubicado en la raíz del proyecto, eliminando los archivos `docker-compose` individuales heredados de cada subproyecto.
+El archivo [docker-compose.dev.yml](docker-compose.dev.yml) orquesta los tres servicios del stack bajo el nombre de proyecto `flix-dev`:
 
-### 7.1. Levantar el stack completo (`docker-compose.dev.yml`)
+1. `db` (`postgres:17-alpine`): base de datos PostgreSQL 17 con volumen persistente `postgres-data` y `healthcheck` mediante `pg_isready`.
+2. `backend` (`kevinmateog/flix-backend`): carga `backend/.env`, espera a que `db` esté saludable, ejecuta `migrate-if-needed.mjs` y `seed-data.mjs` al iniciar y expone el puerto `3000` con `healthcheck` sobre `GET /`.
+3. `frontend` (`kevinmateog/flix-frontend`): carga `frontend/.env`, espera a que `backend` esté saludable, se comunica internamente con `BACKEND=http://backend:3000` y expone el puerto `5173`.
 
-El archivo [`docker-compose.dev.yml`](docker-compose.dev.yml) define y conecta los tres servicios principales bajo el proyecto `flix-dev`:
-
-1. **`db` (`postgres:17-alpine`)**: Base de datos PostgreSQL 17 con volumen persistente (`postgres-data`) y `healthcheck` mediante `pg_isready`.
-2. **`backend` (`kevinmateog/flix-backend`)**: Espera a que `db` esté saludable, ejecuta automáticamente las migraciones (`migrate-if-needed.mjs`) y la carga de datos semilla (`seed-data.mjs`) antes de iniciar el servidor en el puerto `3000`, y expone su propio `healthcheck` sobre `GET /`.
-3. **`frontend` (`kevinmateog/flix-frontend`)**: Espera a que `backend` esté saludable, se comunica internamente con la API a través de la red de Docker (`BACKEND=http://backend:3000`) y expone la aplicación web en el puerto `5173`.
-
-> **Nota sobre rutas de `env_file`:** En [`docker-compose.dev.yml`](docker-compose.dev.yml) las rutas de `env_file` apuntan por defecto a `../flix-backend/.env` y `../flix-frontend/.env` (o puedes ajustarlas a `./backend/.env` y `./frontend/.env` si ejecutas directamente desde este monorepo). Si no se definen `POSTGRES_DB`, `POSTGRES_USER` ni `POSTGRES_PASSWORD`, se usan valores por defecto de desarrollo (`flix`, `flix_user`, `flix_1234_`).
+> Si `POSTGRES_DB`, `POSTGRES_USER` o `POSTGRES_PASSWORD` no están definidos en el entorno, `docker-compose.dev.yml` usa valores de desarrollo por defecto (`flix`, `flix_user`, `flix_1234_`).
 
 ```bash
 # Levantar todos los servicios en segundo plano desde la raíz del repositorio
 docker compose -f docker-compose.dev.yml up -d
 
-# Ver logs en tiempo real (todos o por servicio)
+# Consultar logs por servicio
 docker compose -f docker-compose.dev.yml logs -f
 docker compose -f docker-compose.dev.yml logs -f backend
 docker compose -f docker-compose.dev.yml logs -f frontend
 
-# Detener los contenedores (conservando los datos de PostgreSQL)
+# Detener los contenedores conservando los datos
 docker compose -f docker-compose.dev.yml down
 
-# Detener los contenedores y eliminar el volumen de la base de datos
+# Detener los contenedores y eliminar el volumen de PostgreSQL
 docker compose -f docker-compose.dev.yml down -v
 ```
 
-- **Frontend:** `http://localhost:5173` (configurable con `FRONTEND_PORT`)
-- **Backend:** `http://localhost:3000` (configurable con `BACKEND_PORT`)
-- **PostgreSQL:** `localhost:5432` (configurable con `POSTGRES_PORT`)
-
-### 7.2. Levantar servicios específicos
-
-Si solo necesitas la base de datos y el backend (por ejemplo, para correr el frontend en local con `npm run dev`):
+### Levantar solo base de datos y backend
 
 ```bash
 docker compose -f docker-compose.dev.yml up -d db backend
 ```
 
-### 7.3. Construir las imágenes manualmente
-
-Cada módulo conserva su propio `Dockerfile` multi-stage (`backend/Dockerfile` y `frontend/Dockerfile`) para construir las imágenes localmente o desde el pipeline de CI/CD:
+### Construcción manual de imágenes
 
 ```bash
-# Construir imagen del backend
 docker build -t kevinmateog/flix-backend:latest ./backend
 
-# Construir imagen del frontend
 docker build \
   --build-arg BACKEND=http://localhost:3000 \
   --build-arg NEXT_PUBLIC_URL=http://localhost:5173 \
@@ -324,43 +299,20 @@ docker build \
 
 ## 8. Base de datos, migraciones y datos semilla
 
-### 8.1. PostgreSQL + Drizzle ORM (Backend)
-
-El esquema principal se define en `backend/src/db/schema.ts` y las migraciones generadas se almacenan en `backend/drizzle/`. Los datos iniciales se encuentran en archivos CSV dentro de `backend/scripts/` (`playable-content.csv`, `my-list.csv`, `watch-history.csv`).
+El esquema relacional se define en `backend/src/infrastructure/repository/schema.ts`, configurado en [backend/drizzle.config.ts](backend/drizzle.config.ts), y las migraciones SQL versionadas se guardan en `backend/drizzle/`. Los datos iniciales de catálogo, listas e historial se cargan desde los archivos CSV en `backend/scripts/`.
 
 ```bash
 cd backend
 
-# Generar una nueva migración tras modificar src/db/schema.ts
+# Generar una nueva migración tras modificar src/infrastructure/repository/schema.ts
 npx drizzle-kit generate
 
 # Aplicar migraciones manualmente
 npx drizzle-kit migrate
 
-# Aplicar migraciones solo si hacen falta y poblar datos iniciales
-node scripts/migrate-if-needed.mjs
-node scripts/seed-data.mjs
-```
-
-### 8.2. Supabase (Frontend)
-
-Las migraciones SQL de Supabase se encuentran en `frontend/supabase/migrations/`:
-
-| Migración | Descripción |
-| --- | --- |
-| `20260725210000_profiles_table.sql` | Tabla de perfiles |
-| `20260726000001_watch_history.sql` | Historial de reproducción |
-| `20260726000002_my_list.sql` | Lista personal (“Mi lista”) |
-| `20260726000003_profiles_region.sql` | Región en perfiles |
-| `20260728000004_watch_history_unique_identity.sql` | Identidad única en el historial |
-| `20260730000005_dislikes.sql` | Registro de “No me gusta” |
-
-Para aplicarlas mediante la [Supabase CLI](https://supabase.com/docs/guides/cli):
-
-```bash
-cd frontend
-supabase link --project-ref <tu-project-ref>
-supabase db push
+# Verificar estado, aplicar migraciones pendientes y cargar datos semilla
+npm run db:migrate
+npm run db:seed
 ```
 
 ---
@@ -370,72 +322,73 @@ supabase db push
 ### Backend (`cd backend`)
 
 | Comando | Descripción |
-| --- | --- |
-| `npm run dev` | Inicia el servidor en desarrollo con `nodemon` + `tsx`. |
-| `npm run build` | Compila el proyecto TypeScript a `dist/`. |
-| `npm start` | Ejecuta la versión compilada (`node dist/index.js`). |
+| :--- | :--- |
+| `npm run dev` | Inicia el servidor en desarrollo con `nodemon` y `tsx`. |
+| `npm run build` | Compila el proyecto TypeScript hacia `dist/`. |
+| `npm start` | Ejecuta la aplicación compilada (`node dist/src/index.js`). |
+| `npm test` | Ejecuta la suite de pruebas en `tests/**/*.test.ts` con `node --test`. |
+| `npm run db:migrate` | Ejecuta `scripts/migrate-if-needed.mjs`. |
+| `npm run db:seed` | Ejecuta `scripts/seed-data.mjs`. |
 
 ### Frontend (`cd frontend`)
 
 | Comando | Descripción |
-| --- | --- |
-| `npm run dev` | Inicia el servidor de desarrollo de Next.js en el puerto `5173`. |
-| `npm run build` | Compila la aplicación para producción. |
+| :--- | :--- |
+| `npm run dev` | Inicia Next.js en desarrollo sobre el puerto `5173`. |
+| `npm run build` | Compila la aplicación para producción (`standalone`). |
 | `npm start` | Inicia el servidor de producción de Next.js. |
-| `npm run lint` | Ejecuta el análisis estático con ESLint. |
+| `npm run lint` | Ejecuta ESLint. |
 | `npm run format` | Formatea el código con Prettier. |
-| `npm run format:check` | Verifica el formato del código sin modificar archivos. |
+| `npm run format:check` | Comprueba el formato sin modificar archivos. |
 
 ---
 
-## 10. Pruebas end-to-end (Playwright)
+## 10. Pruebas automatizadas
 
-Las pruebas end-to-end del frontend se ubican en `frontend/tests/` (`smoke.spec.js`) y se configuran en `frontend/playwright.config.js` (usando Chromium contra `http://127.0.0.1:5173`, configurable mediante `PLAYWRIGHT_BASE_URL`).
+### Pruebas de contratos del Backend
 
-Para ejecutarlas en local:
+El backend incluye pruebas automatizadas de contratos y arquitectura limpia en [backend/tests/clean-architecture.smoke.test.ts](backend/tests/clean-architecture.smoke.test.ts) usando repositorios en memoria y el test runner nativo de Node.js:
+
+```bash
+cd backend
+npm test
+```
+
+### Pruebas E2E del Frontend (Playwright)
+
+Las pruebas del frontend están en [frontend/tests/smoke.spec.js](frontend/tests/smoke.spec.js) con configuración en [frontend/playwright.config.js](frontend/playwright.config.js) (`PLAYWRIGHT_BASE_URL`, por defecto `http://127.0.0.1:5173`):
 
 ```bash
 cd frontend
 
-# 1. Compilar e iniciar la aplicación en el puerto 5173 (en una terminal)
+# Terminal 1: compilar e iniciar la aplicación
 npm run build
-npm start   # o npm run dev
+npm start
 
-# 2. Instalar Playwright puntualmente y ejecutar las pruebas (en otra terminal)
+# Terminal 2: ejecutar Playwright
 npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.52.0
 npx playwright install --with-deps chromium
 npx playwright test
 ```
 
-El reporte HTML queda disponible en `frontend/playwright-report/`.
+El reporte HTML se genera en `frontend/playwright-report/`.
 
 ---
 
 ## 11. Integración continua (Jenkins)
 
-Tanto `backend/Jenkinsfile` como `frontend/Jenkinsfile` definen pipelines automatizados de CI/CD:
+Los archivos [backend/Jenkinsfile](backend/Jenkinsfile) y [frontend/Jenkinsfile](frontend/Jenkinsfile) definen los pipelines actuales:
 
-1. **Npm Install**: Instala dependencias con `npm ci` en un contenedor Node.js 22.
-2. **Build**: Ejecuta `npm run build` para validar la compilación.
-3. **Playwright Test** *(solo en Frontend)*: Instala Playwright + Chromium, levanta el servidor `standalone` en `127.0.0.1:5173`, espera a que `/login` responda y ejecuta los tests end-to-end.
-4. **Docker Build**: Construye las imágenes `kevinmateog/flix-backend` y `kevinmateog/flix-frontend` etiquetadas con `$BUILD_NUMBER` y `latest`.
-5. **Docker Push**: Publica las imágenes en Docker Hub usando la credencial `dockerHub` configurada en Jenkins.
+- **Backend (`backend/Jenkinsfile`):** ejecuta `Npm Install` (`npm ci`), `Build` (`npm run build`), `Docker Build` (`kevinmateog/flix-backend:$BUILD_NUMBER` y `:latest`) y `Docker Push` (`latest` hacia Docker Hub con la credencial `dockerHub`).
+- **Frontend (`frontend/Jenkinsfile`):** ejecuta `Npm Install` (`npm ci`), `Build` (`npm run build`), `Playwright Test` contra `.next/standalone/server.js`, `Docker Build` (`kevinmateog/flix-frontend:$BUILD_NUMBER` y `:latest`) y `Docker Push` (`latest` hacia Docker Hub con la credencial `dockerHub`).
 
 ---
 
 ## 12. Documentación de la API
 
-El backend cuenta con documentación completa bajo el estándar **OpenAPI 3.0 (Swagger)**:
+El backend expone documentación OpenAPI 3.0 en los siguientes puntos:
 
-- **Swagger UI interactivo** (con el backend corriendo): `http://localhost:3000/api-docs`
-- **Especificación JSON en vivo**: `http://localhost:3000/api-docs.json`
-- **Archivo OpenAPI estático**: [`backend/api-docs/openapi.json`](backend/api-docs/openapi.json)
-- **Guía detallada de endpoints en Markdown**: [`backend/api-docs/README.md`](backend/api-docs/README.md)
-
----
-
-## 13. Repositorios relacionados
-
-- Repositorio del Frontend: [KevinMateoG/flix-frontend](https://github.com/KevinMateoG/flix-frontend)
-- Repositorio del Backend: [KevinMateoG/flix-backend](https://github.com/KevinMateoG/flix-backend)
-- Proyecto base original (fork): [EmanuelGarciaR/flix](https://github.com/EmanuelGarciaR/flix)
+- Swagger UI interactivo (con el backend activo): `http://localhost:3000/api-docs`
+- Especificación JSON dinámica: `http://localhost:3000/api-docs.json`
+- Archivo OpenAPI estático: [backend/api-docs/openapi.json](backend/api-docs/openapi.json)
+- Referencia de endpoints en Markdown: [backend/api-docs/README.md](backend/api-docs/README.md)

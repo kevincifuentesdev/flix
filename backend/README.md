@@ -1,4 +1,4 @@
-# Flix — Backend (Plataforma de Streaming de Películas y Series)
+# Flix: Backend (Plataforma de Streaming de Películas y Series)
 
 API REST del proyecto **Flix**, una plataforma full-stack de streaming y descubrimiento de películas y series desarrollada como Proyecto de Aula de Desarrollo Web Full-Stack (2026-2). Implementada en **Node.js**, **Express** y **TypeScript** bajo **Clean Architecture (Arquitectura Limpia en 4 capas)** y preparada para despliegue Serverless en **Vercel** conectado a **Neon (PostgreSQL Serverless)**.
 
@@ -31,10 +31,10 @@ Se conecta de forma integral con el [frontend de Flix](https://flix-frontend-nin
 
 | Elemento | Plataforma | Enlace |
 | --- | --- | --- |
-| **Backend / API desplegada (Producción)** | Vercel | `[https://flix-backend-six.vercel.app/]` |
-| **Frontend desplegado (Producción)** | Vercel | `[https://flix-frontend-nine.vercel.app/]` |
-| **Swagger UI Interactivo (API Docs)** | Vercel / Local | `[[URL_BACKEND](https://flix-backend-six.vercel.app)]/api-docs` |
-| **Especificación OpenAPI 3.0 (JSON)** | Vercel / Local | `[https://flix-backend-six.vercel.app]/api-docs.json` |
+| **Backend / API desplegada (Producción)** | Vercel | [https://flix-backend-six.vercel.app/](https://flix-backend-six.vercel.app/) |
+| **Frontend desplegado (Producción)** | Vercel | [https://flix-frontend-nine.vercel.app/](https://flix-frontend-nine.vercel.app/) |
+| **Swagger UI Interactivo (API Docs)** | Vercel / Local | [https://flix-backend-six.vercel.app/api-docs](https://flix-backend-six.vercel.app/api-docs) |
+| **Especificación OpenAPI 3.0 (JSON)** | Vercel / Local | [https://flix-backend-six.vercel.app/api-docs.json](https://flix-backend-six.vercel.app/api-docs.json) |
 | **Repositorio Backend** | GitHub | [https://github.com/KevinMateoG/flix-backend](https://github.com/KevinMateoG/flix-backend) |
 | **Repositorio Frontend** | GitHub | [https://github.com/KevinMateoG/flix-frontend](https://github.com/KevinMateoG/flix-frontend) |
 
@@ -219,10 +219,8 @@ El proyecto cumple con el requerimiento de subida de archivos binarios a almacen
 
 La API cuenta con documentación completa en múltiples formatos:
 
-- **Documentación de referencia en Markdown:** Consulta la guía detallada de endpoints, parámetros, cuerpos de petición y modelos de datos en:
-  👉 **[api-docs/README.md](api-docs/README.md)**
-- **Swagger UI Interactivo:** Disponible al iniciar el backend ingresando a:
-  👉 `http://localhost:3000/api-docs` (o en la URL de producción correspondiente).
+- Documentación de referencia en Markdown: [api-docs/README.md](api-docs/README.md).
+- Swagger UI interactivo (con el backend activo): `http://localhost:3000/api-docs` (o en la URL de producción correspondiente).
 - **Especificación OpenAPI 3.0 en formato JSON:**
   - En tiempo de ejecución: `GET /api-docs.json`
   - Archivo estático descargable: [api-docs/openapi.json](api-docs/openapi.json)
