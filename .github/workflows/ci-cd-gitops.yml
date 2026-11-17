@@ -23,6 +23,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Run repository security and secrets audit
+        working-directory: .
+        run: |
+          chmod +x ./scripts/audit-security.sh
+          ./scripts/audit-security.sh
+
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
