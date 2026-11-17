@@ -46,6 +46,13 @@ spec:
         - name: flix-backend
           image: kevinmateog/flix-backend:sha-4309045
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
           ports:
             - name: http
               containerPort: 3000

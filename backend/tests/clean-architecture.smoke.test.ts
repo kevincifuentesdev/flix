@@ -779,6 +779,13 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
       const healthRes = await fetch(`${baseUrl}/`);
       assert.equal(healthRes.status, 200);
       assert.equal(await healthRes.text(), "Flix Backend OK");
+      assert.equal(healthRes.headers.get("x-content-type-options"), "nosniff");
+      assert.equal(healthRes.headers.get("x-frame-options"), "DENY");
+      assert.equal(
+        healthRes.headers.get("referrer-policy"),
+        "strict-origin-when-cross-origin",
+      );
+      assert.equal(healthRes.headers.get("x-powered-by"), null);
 
       const readinessRes = await fetch(`${baseUrl}/health`);
       assert.equal(readinessRes.status, 200);

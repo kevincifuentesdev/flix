@@ -60,6 +60,15 @@ export function createApp(
   const playbackController = new PlaybackController(deps.playbackUseCase);
   const tmdbController = new TmdbController(deps.tmdbUseCase);
 
+  app.disable("x-powered-by");
+
+  app.use((_req: Request, res: Response, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    next();
+  });
+
   app.use(
     cors({
       origin: (origin, callback) => {
@@ -67,17 +76,24 @@ export function createApp(
           callback(null, true);
           return;
         }
-        const allowedFrontend = process.env.FRONTEND_URL;
+        const configuredOrigins = [
+          process.env.FRONTEND_URL,
+          ...(process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? "").split(","),
+        ]
+          .map((item) => item?.trim())
+          .filter((item): item is string => Boolean(item));
+
         if (
-          !allowedFrontend ||
-          origin === allowedFrontend ||
+          configuredOrigins.length === 0 ||
+          configuredOrigins.includes(origin) ||
           origin.endsWith(".vercel.app") ||
-          origin.startsWith("http://localhost:")
+          origin.startsWith("http://localhost:") ||
+          origin.startsWith("http://127.0.0.1:")
         ) {
           callback(null, true);
           return;
         }
-        callback(null, allowedFrontend);
+        callback(null, false);
       },
       credentials: true,
     }),

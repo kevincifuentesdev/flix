@@ -35,7 +35,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-flix_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-flix_1234_}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     restart: unless-stopped
