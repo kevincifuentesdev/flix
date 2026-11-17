@@ -15,7 +15,7 @@ permissions:
 jobs:
   backend-ci:
     name: Backend Build and Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: backend
@@ -47,7 +47,7 @@ jobs:
 
   frontend-ci:
     name: Frontend Lint, Build and E2E Smoke
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: frontend
@@ -104,7 +104,7 @@ jobs:
     name: Build, Push Immutable Tags and Promote GitOps
     needs: [backend-ci, frontend-ci]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[skip ci]')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

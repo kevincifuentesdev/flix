@@ -44,7 +44,7 @@ spec:
     spec:
       containers:
         - name: flix-backend
-          image: kevinmateog/flix-backend:sha-541c243
+          image: kevinmateog/flix-backend:sha-4c23ee4
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
