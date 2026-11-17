@@ -44,7 +44,7 @@ spec:
     spec:
       containers:
         - name: flix-backend
-          image: kevinmateog/flix-backend:sha-eafd488
+          image: kevinmateog/flix-backend:sha-4309045
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

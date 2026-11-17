@@ -22,8 +22,9 @@ Repositorio unificado (monorepo) de la plataforma de streaming **Flix**. Central
 8. [Base de datos, migraciones y datos semilla](#8-base-de-datos-migraciones-y-datos-semilla)
 9. [Scripts disponibles](#9-scripts-disponibles)
 10. [Pruebas automatizadas](#10-pruebas-automatizadas)
-11. [Integración continua (Jenkins)](#11-integración-continua-jenkins)
-12. [Documentación de la API](#12-documentación-de-la-api)
+11. [Integración continua (GitHub Actions y Jenkins)](#11-integración-continua-github-actions-y-jenkins)
+12. [Trazabilidad de entrega y GitOps (De Commit a Pod)](#12-trazabilidad-de-entrega-y-gitops-de-commit-a-pod)
+13. [Documentación de la API](#13-documentación-de-la-api)
 
 ---
 
@@ -121,6 +122,22 @@ flix/
 │   ├── proxy.ts                     # Proxy hacia /api/* y protección de rutas por sesión/rol
 │   └── package.json
 │
+├── .github/
+│   └── workflows/
+│       └── ci-cd-gitops.yml         # Pipeline CI/CD y promoción GitOps en GitHub Actions
+├── k8s/
+│   ├── argocd/
+│   │   └── application.yaml         # Aplicación declarativa ArgoCD (prune y selfHeal)
+│   ├── base/
+│   │   ├── namespace.yaml           # Namespace flix
+│   │   ├── postgres.yaml            # StatefulSet, Service y PVC de PostgreSQL 17
+│   │   ├── backend.yaml             # Deployment, Service y ConfigMap del backend
+│   │   ├── frontend.yaml            # Deployment, Service NodePort y ConfigMap del frontend
+│   │   └── secrets.example.yaml     # Plantilla segura de Secrets (sin credenciales reales)
+│   └── kustomization.yaml           # Fuente de verdad Kustomize con tags inmutables
+├── scripts/
+│   ├── gitops-promote.sh            # Promueve manifiestos k8s/ a un tag sha-<commit>
+│   └── verify-traceability.sh       # Verifica la cadena Commit -> Manifiesto -> Pod -> ArgoCD
 ├── .gitignore                       # Reglas globales de exclusión en el monorepo
 ├── docker-compose.dev.yml           # Stack local unificado (db, backend, frontend)
 └── README.md                        # Documentación principal del proyecto
@@ -375,16 +392,59 @@ El reporte HTML se genera en `frontend/playwright-report/`.
 
 ---
 
-## 11. Integración continua (Jenkins)
+## 11. Integración continua (GitHub Actions y Jenkins)
 
-Los archivos [backend/Jenkinsfile](backend/Jenkinsfile) y [frontend/Jenkinsfile](frontend/Jenkinsfile) definen los pipelines actuales:
+El proyecto cuenta con un workflow unificado en GitHub Actions ([.github/workflows/ci-cd-gitops.yml](.github/workflows/ci-cd-gitops.yml)) y pipelines por módulo en Jenkins ([backend/Jenkinsfile](backend/Jenkinsfile) y [frontend/Jenkinsfile](frontend/Jenkinsfile)):
 
-- **Backend (`backend/Jenkinsfile`):** ejecuta `Npm Install` (`npm ci`), `Build` (`npm run build`), `Docker Build` (`kevinmateog/flix-backend:$BUILD_NUMBER` y `:latest`) y `Docker Push` (`latest` hacia Docker Hub con la credencial `dockerHub`).
-- **Frontend (`frontend/Jenkinsfile`):** ejecuta `Npm Install` (`npm ci`), `Build` (`npm run build`), `Playwright Test` contra `.next/standalone/server.js`, `Docker Build` (`kevinmateog/flix-frontend:$BUILD_NUMBER` y `:latest`) y `Docker Push` (`latest` hacia Docker Hub con la credencial `dockerHub`).
+- **GitHub Actions (`.github/workflows/ci-cd-gitops.yml`):**
+  - `backend-ci`: ejecuta `npm ci`, `npm run build` y `npm test` en `backend/`.
+  - `frontend-ci`: ejecuta `npm ci`, `npm run lint`, `npm run build` y la prueba smoke de Playwright en `frontend/`.
+  - `publish-and-promote` (en `push` a `main` tras pasar ambos CI): construye ambas imágenes con `GIT_COMMIT_SHA=${GITHUB_SHA::7}`, publica los tags `:sha-<SHA7>` y `:latest` en Docker Hub (cuando `DOCKERHUB_USERNAME` y `DOCKERHUB_TOKEN` están configurados), actualiza `k8s/` mediante `scripts/gitops-promote.sh` y registra el resumen de trazabilidad en `$GITHUB_STEP_SUMMARY`.
+- **Jenkins (`backend/Jenkinsfile` y `frontend/Jenkinsfile`):**
+  - Backend ejecuta `Npm Install`, `Build`, `Test` (`npm test`), `Docker Build` y `Docker Push` publicando los tags `:sha-<SHORT_SHA>`, `:${BUILD_NUMBER}` y `:latest`.
+  - Frontend ejecuta `Npm Install`, `Build`, `Playwright Test`, `Docker Build` y `Docker Push` publicando `:sha-<SHORT_SHA>`, `:${BUILD_NUMBER}` y `:latest`.
 
 ---
 
-## 12. Documentación de la API
+## 12. Trazabilidad de entrega y GitOps (De Commit a Pod)
+
+```mermaid
+flowchart LR
+  Commit["Commit Git (SHA)"] -->|"Trigger push/PR"| CI["CI (Tests + Build)"]
+  CI -->|"Build con GIT_COMMIT_SHA"| Hub["Docker Hub (sha-SHA7)"]
+  CI -->|"scripts/gitops-promote.sh"| GitOps["k8s/kustomization.yaml (Git)"]
+  GitOps -->|"Reconciliación (ArgoCD / Kustomize)"| Cluster["Pods en Minikube (namespace flix)"]
+  Cluster -->|"GET /health"| Health["commitSha y buildNumber activos"]
+```
+
+### Separación entre CI y CD / GitOps
+
+1. **Integración Continua (CI):** valida compilación y pruebas automatizadas en cada commit o Pull Request y genera artefactos inmutables etiquetados con el SHA corto del commit (`sha-<SHA7>`), además de incrustar `GIT_COMMIT_SHA` y `BUILD_NUMBER` como etiquetas OCI y variables de entorno en los `Dockerfile`.
+2. **Entrega Continua / GitOps (CD):** el directorio `k8s/` dentro de Git actúa como única fuente de verdad del estado deseado en Kubernetes (`k8s/kustomization.yaml` y `k8s/base/*.yaml`). Ningún manifiesto usa el tag mutable `:latest`. El recurso [k8s/argocd/application.yaml](k8s/argocd/application.yaml) configura ArgoCD con `prune: true` y `selfHeal: true` para reconciliar el clúster contra la rama `main` de este repositorio (o se puede aplicar directamente con `kubectl apply -k k8s`).
+
+### Comandos de verificación en vivo
+
+```bash
+# 1. Auditar la cadena completa Commit -> Manifiestos -> Pods -> ArgoCD
+./scripts/verify-traceability.sh
+
+# 2. Promover manualmente los manifiestos al tag inmutable de un commit específico
+./scripts/gitops-promote.sh "sha-$(git rev-parse --short=7 HEAD)"
+
+# 3. Desplegar el estado declarativo con Kustomize o registrar la app en ArgoCD
+kubectl apply -k k8s
+kubectl apply -f k8s/argocd/application.yaml
+
+# 4. Comprobar la imagen exacta corriendo dentro de los pods en Minikube
+kubectl get pods -n flix -o jsonpath="{range .items[*]}{.metadata.name}{'\t'}{.spec.containers[*].image}{'\n'}{end}"
+
+# 5. Confirmar en tiempo de ejecución el commitSha servido por el backend
+curl -s http://localhost:3000/health
+```
+
+---
+
+## 13. Documentación de la API
 
 El backend expone documentación OpenAPI 3.0 en los siguientes puntos:
 
