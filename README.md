@@ -24,7 +24,8 @@ Repositorio unificado (monorepo) de la plataforma de streaming **Flix**. Central
 10. [Pruebas automatizadas](#10-pruebas-automatizadas)
 11. [Integración continua (GitHub Actions y Jenkins)](#11-integración-continua-github-actions-y-jenkins)
 12. [Trazabilidad de entrega y GitOps (De Commit a Pod)](#12-trazabilidad-de-entrega-y-gitops-de-commit-a-pod)
-13. [Documentación de la API](#13-documentación-de-la-api)
+13. [Configuración, seguridad y manejo de secretos](#13-configuración-seguridad-y-manejo-de-secretos)
+14. [Documentación de la API](#14-documentación-de-la-api)
 
 ---
 
@@ -136,7 +137,9 @@ flix/
 │   │   └── secrets.example.yaml     # Plantilla segura de Secrets (sin credenciales reales)
 │   └── kustomization.yaml           # Fuente de verdad Kustomize con tags inmutables
 ├── scripts/
+│   ├── audit-security.sh            # Audita secretos, .gitignore, .dockerignore y hardening K8s
 │   ├── gitops-promote.sh            # Promueve manifiestos k8s/ a un tag sha-<commit>
+│   ├── sync-k8s-secrets.sh          # Verifica y aplica Secrets en Kubernetes sin exponer valores
 │   └── verify-traceability.sh       # Verifica la cadena Commit -> Manifiesto -> Pod -> ArgoCD
 ├── .gitignore                       # Reglas globales de exclusión en el monorepo
 ├── docker-compose.dev.yml           # Stack local unificado (db, backend, frontend)
@@ -444,7 +447,34 @@ curl -s http://localhost:3000/health
 
 ---
 
-## 13. Documentación de la API
+## 13. Configuración, seguridad y manejo de secretos
+
+El repositorio separa la configuración no sensible de las credenciales reales en todos los entornos:
+
+- **Configuración externa:** las variables públicas o de topología viven en [backend/.env.example](backend/.env.example), [frontend/.env.example](frontend/.env.example) y los `ConfigMap` declarados en `k8s/base/`. Las credenciales sensibles se inyectan fuera de banda mediante archivos `.env` locales (ignorados por `.gitignore` y `.dockerignore`) o `Secret` en Kubernetes ([k8s/base/secrets.example.yaml](k8s/base/secrets.example.yaml) solo contiene marcadores de posición y no se aplica en `kustomization.yaml`).
+- **Endurecimiento de contenedores y red:** tanto `backend/Dockerfile` (`USER node`, UID 1000) como `frontend/Dockerfile` (`USER nextjs`, UID 1001) ejecutan procesos sin privilegios de `root`. En Kubernetes, ambos `Deployment` fijan `runAsNonRoot: true`, `allowPrivilegeEscalation: false` y `capabilities.drop: ["ALL"]`; PostgreSQL y el backend operan aislados tras servicios `ClusterIP` internos, y en `docker-compose.dev.yml` PostgreSQL queda ligado únicamente a `127.0.0.1`.
+- **Seguridad HTTP en la API:** `backend/src/interface/routers/app.router.ts` deshabilita la cabecera `X-Powered-By`, envía `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` y `Referrer-Policy: strict-origin-when-cross-origin`, y valida orígenes CORS contra `FRONTEND_URL` y `BETTER_AUTH_TRUSTED_ORIGINS`.
+
+### Comandos seguros para verificación en vivo
+
+```bash
+# 1. Ejecutar auditoría de seguridad sobre Git, Dockerfiles y manifiestos K8s
+./scripts/audit-security.sh
+
+# 2. Verificar presencia de variables requeridas en archivos .env locales (valores redactados)
+./scripts/sync-k8s-secrets.sh --check
+
+# 3. Sincronizar Secrets reales hacia Minikube sin exponer credenciales en consola ni en Git
+./scripts/sync-k8s-secrets.sh --apply
+
+# 4. Mostrar nombres de Secrets y sus llaves en Kubernetes sin revelar valores
+kubectl get secret flix-postgres-secret flix-backend-secret flix-frontend-secret -n flix \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{range $k, $v := .data}{"  - "}{$k}{"\n"}{end}{end}'
+```
+
+---
+
+## 14. Documentación de la API
 
 El backend expone documentación OpenAPI 3.0 en los siguientes puntos:
 
