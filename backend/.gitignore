@@ -1,3 +1,9 @@
-*node_modules
+node_modules/
+dist/
+coverage/
 .env
-dist
+.env.*
+!.env.example
+*.log
+*.tsbuildinfo
+.DS_Store
