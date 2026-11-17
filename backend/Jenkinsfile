@@ -26,27 +26,57 @@ pipeline {
       }
     }
 
+    stage('Test') {
+      agent {
+        docker {
+          image 'node:22-alpine'
+          reuseNode true
+        }
+      }
+      steps {
+        sh 'npm test'
+      }
+    }
+
     stage('Docker Build') {
       agent any
       steps {
-        sh 'docker build -t kevinmateog/flix-backend:$BUILD_NUMBER -t kevinmateog/flix-backend:latest .'
+        script {
+          env.SHORT_SHA = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
+        }
+        sh '''
+          docker build \
+            --build-arg GIT_COMMIT_SHA="${SHORT_SHA}" \
+            --build-arg BUILD_NUMBER="${BUILD_NUMBER}" \
+            -t "kevinmateog/flix-backend:sha-${SHORT_SHA}" \
+            -t "kevinmateog/flix-backend:${BUILD_NUMBER}" \
+            -t "kevinmateog/flix-backend:latest" .
+        '''
       }
     }
 
     stage('Docker Push') {
       agent any
       steps {
+        script {
+          if (!env.SHORT_SHA) {
+            env.SHORT_SHA = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
+          }
+        }
         withCredentials([usernamePassword(
           credentialsId: 'dockerHub',
           passwordVariable: 'dockerHubPassword',
           usernameVariable: 'dockerHubUser'
         )]) {
-          sh 'echo "$dockerHubPassword" | docker login -u "$dockerHubUser" --password-stdin'
-          sh 'docker push kevinmateog/flix-backend:latest'
-          sh 'docker logout'
+          sh '''
+            echo "$dockerHubPassword" | docker login -u "$dockerHubUser" --password-stdin
+            docker push "kevinmateog/flix-backend:sha-${SHORT_SHA}"
+            docker push "kevinmateog/flix-backend:${BUILD_NUMBER}"
+            docker push "kevinmateog/flix-backend:latest"
+            docker logout
+          '''
         }
       }
     }
-
   }
 }

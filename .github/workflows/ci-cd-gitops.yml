@@ -1,0 +1,178 @@
+name: CI/CD and GitOps Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  backend-ci:
+    name: Backend Build and Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Run contract and smoke tests
+        run: npm test
+
+  frontend-ci:
+    name: Frontend Lint, Build and E2E Smoke
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Build Next.js standalone app
+        env:
+          BACKEND: http://localhost:3000
+          NEXT_PUBLIC_URL: http://127.0.0.1:5173
+        run: npm run build
+
+      - name: Run Playwright smoke test
+        run: |
+          set -euo pipefail
+          npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.52.0
+          ./node_modules/.bin/playwright install --with-deps chromium
+
+          HOSTNAME=127.0.0.1 PORT=5173 node .next/standalone/server.js > frontend.log 2>&1 &
+          FRONTEND_PID=$!
+          trap 'kill "$FRONTEND_PID" 2>/dev/null || true' EXIT
+
+          ready=false
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:5173/login >/dev/null; then
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$ready" != true ]; then
+            cat frontend.log
+            exit 1
+          fi
+
+          ./node_modules/.bin/playwright test
+
+  publish-and-promote:
+    name: Build, Push Immutable Tags and Promote GitOps
+    needs: [backend-ci, frontend-ci]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[skip ci]')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute immutable image tag
+        id: meta
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        if: secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+          build-args: |
+            GIT_COMMIT_SHA=${{ steps.meta.outputs.short_sha }}
+            BUILD_NUMBER=${{ github.run_number }}
+          tags: |
+            kevinmateog/flix-backend:${{ steps.meta.outputs.image_tag }}
+            kevinmateog/flix-backend:latest
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+          build-args: |
+            BACKEND=http://flix-backend:3000
+            NEXT_PUBLIC_URL=http://localhost:5173
+            GIT_COMMIT_SHA=${{ steps.meta.outputs.short_sha }}
+            BUILD_NUMBER=${{ github.run_number }}
+          tags: |
+            kevinmateog/flix-frontend:${{ steps.meta.outputs.image_tag }}
+            kevinmateog/flix-frontend:latest
+
+      - name: Update GitOps manifests
+        run: |
+          chmod +x ./scripts/gitops-promote.sh
+          ./scripts/gitops-promote.sh "${{ steps.meta.outputs.image_tag }}"
+
+      - name: Commit and push GitOps promotion
+        run: |
+          if git diff --quiet k8s/; then
+            echo "No changes in k8s/ manifests."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add k8s/
+          git commit -m "chore(gitops): promote images to ${{ steps.meta.outputs.image_tag }} [skip ci]"
+          git push
+
+      - name: Write traceability summary
+        run: |
+          {
+            echo "## Delivery Traceability"
+            echo "| Stage | Reference |"
+            echo "| :--- | :--- |"
+            echo "| Git Commit | \`${{ github.sha }}\` |"
+            echo "| Workflow Run | \`${{ github.run_id }}\` (run #${{ github.run_number }}) |"
+            echo "| Image Tag | \`${{ steps.meta.outputs.image_tag }}\` |"
+            echo "| GitOps Manifest | \`k8s/kustomization.yaml\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

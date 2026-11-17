@@ -65,10 +65,17 @@ pipeline {
     stage('Docker Build') {
       agent any
       steps {
+        script {
+          env.SHORT_SHA = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
+        }
         sh '''
-          docker build --build-arg BACKEND=http://localhost:3000 \
-            -t kevinmateog/flix-frontend:$BUILD_NUMBER \
-            -t kevinmateog/flix-frontend:latest .
+          docker build \
+            --build-arg BACKEND=http://flix-backend:3000 \
+            --build-arg GIT_COMMIT_SHA="${SHORT_SHA}" \
+            --build-arg BUILD_NUMBER="${BUILD_NUMBER}" \
+            -t "kevinmateog/flix-frontend:sha-${SHORT_SHA}" \
+            -t "kevinmateog/flix-frontend:${BUILD_NUMBER}" \
+            -t "kevinmateog/flix-frontend:latest" .
         '''
       }
     }
@@ -76,14 +83,23 @@ pipeline {
     stage('Docker Push') {
       agent any
       steps {
+        script {
+          if (!env.SHORT_SHA) {
+            env.SHORT_SHA = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
+          }
+        }
         withCredentials([usernamePassword(
           credentialsId: 'dockerHub',
           passwordVariable: 'dockerHubPassword',
           usernameVariable: 'dockerHubUser'
         )]) {
-          sh 'echo "$dockerHubPassword" | docker login -u "$dockerHubUser" --password-stdin'
-          sh 'docker push kevinmateog/flix-frontend:latest'
-          sh 'docker logout'
+          sh '''
+            echo "$dockerHubPassword" | docker login -u "$dockerHubUser" --password-stdin
+            docker push "kevinmateog/flix-frontend:sha-${SHORT_SHA}"
+            docker push "kevinmateog/flix-frontend:${BUILD_NUMBER}"
+            docker push "kevinmateog/flix-frontend:latest"
+            docker logout
+          '''
         }
       }
     }
