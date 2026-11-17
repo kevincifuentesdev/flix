@@ -8,7 +8,6 @@ import type {
 } from '../domain/tmdb';
 
 const BASE = env.TMDB_BASE_URL;
-const KEY = env.TMDB_API_KEY;
 const IMG = env.TMDB_IMAGE_BASE_URL;
 const DEFAULT_LANGUAGE = 'en-US';
 
@@ -16,8 +15,9 @@ async function fetchTMDB<T = unknown>(
   endpoint: string,
   params: Record<string, string> = {},
 ): Promise<T> {
+  const apiKey = process.env.TMDB_API_KEY || env.TMDB_API_KEY;
   const url = new URL(`${BASE}${endpoint}`);
-  url.searchParams.set('api_key', KEY);
+  url.searchParams.set('api_key', apiKey);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
 
   const res = await fetch(url.toString(), { next: { revalidate: 3600 } });

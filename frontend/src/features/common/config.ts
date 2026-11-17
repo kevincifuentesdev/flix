@@ -5,7 +5,7 @@ export const appConfig = {
   backendUrl: process.env.BACKEND || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000',
   publicUrl: process.env.NEXT_PUBLIC_URL || 'http://localhost:5173',
   tmdbBaseUrl: process.env.TMDB_BASE_URL || 'https://api.themoviedb.org/3',
-  tmdbApiKey: process.env.TMDB_API_KEY || 'ffefb8a1d835920bd5152230950e867e',
+  tmdbApiKey: process.env.TMDB_API_KEY || '',
   tmdbImageBaseUrl: process.env.TMDB_IMAGE_BASE_URL || 'https://image.tmdb.org/t/p',
   muxPlaybackDomain: process.env.NEXT_PUBLIC_MUX_PLAYBACK_DOMAIN || 'stream.mux.com',
   muxTestPlaybackId: process.env.NEXT_PUBLIC_MUX_TEST_PLAYBACK_ID || 'demo-stream',

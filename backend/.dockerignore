@@ -1,5 +1,10 @@
 node_modules/
+dist/
+coverage/
 *.log
 .git/
 .env
 .env.*
+!.env.example
+*.pem
+*.key
