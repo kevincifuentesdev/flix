@@ -1,7 +1,12 @@
 {
   "name": "flix",
   "version": "0.1.0",
+  "description": "Next.js web application for the Flix streaming platform",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KevinMateoG/flix-frontend.git"
+  },
   "scripts": {
     "dev": "next dev -p 5173",
     "build": "next build",
@@ -14,8 +19,6 @@
     "@gsap/react": "^2.1.2",
     "@mux/mux-node": "^8.8.0",
     "@mux/mux-player-react": "^3.2.0",
-    "@supabase/ssr": "^0.12.3",
-    "@supabase/supabase-js": "^2.111.0",
     "better-auth": "^1.7.7",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",

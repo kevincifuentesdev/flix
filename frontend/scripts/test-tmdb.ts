@@ -16,7 +16,7 @@ async function test() {
   const providers = await tmdb.providers('movie', 27205);
   console.log('Providers US:', Object.keys(providers.results?.US || {}));
 
-  console.log('✅ TMDB working!');
+  console.log('TMDB check completed.');
 }
 
 test().catch(console.error);

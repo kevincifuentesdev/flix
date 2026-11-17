@@ -33,7 +33,6 @@ const eslintConfig = [
       'out/**',
       'build/**',
       'next-env.d.ts',
-      'supabase/migrations/**',
     ],
   },
 ];
