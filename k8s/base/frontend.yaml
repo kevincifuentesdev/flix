@@ -43,7 +43,7 @@ spec:
     spec:
       containers:
         - name: flix-frontend
-          image: kevinmateog/flix-frontend:sha-cc3b99a
+          image: kevinmateog/flix-frontend:sha-f7239bb
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
