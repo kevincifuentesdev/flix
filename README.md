@@ -310,7 +310,6 @@ docker compose -f docker-compose.dev.yml up -d db backend
 docker build -t kevinmateog/flix-backend:latest ./backend
 
 docker build \
-  --build-arg BACKEND=http://localhost:3000 \
   --build-arg NEXT_PUBLIC_URL=http://localhost:5173 \
   -t kevinmateog/flix-frontend:latest ./frontend
 ```

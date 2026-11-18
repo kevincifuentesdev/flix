@@ -157,7 +157,6 @@ jobs:
           context: ./frontend
           push: ${{ steps.meta.outputs.dockerhub_configured == 'true' }}
           build-args: |
-            BACKEND=http://flix-backend:3000
             NEXT_PUBLIC_URL=http://localhost:5173
             GIT_COMMIT_SHA=${{ steps.meta.outputs.short_sha }}
             BUILD_NUMBER=${{ github.run_number }}

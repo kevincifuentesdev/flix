@@ -70,7 +70,6 @@ pipeline {
         }
         sh '''
           docker build \
-            --build-arg BACKEND=http://flix-backend:3000 \
             --build-arg GIT_COMMIT_SHA="${SHORT_SHA}" \
             --build-arg BUILD_NUMBER="${BUILD_NUMBER}" \
             -t "kevinmateog/flix-frontend:sha-${SHORT_SHA}" \
