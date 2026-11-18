@@ -26,6 +26,7 @@ import { PlaybackController } from "../controllers/playback.controller.ts";
 import { ProfileController } from "../controllers/profile.controller.ts";
 import { TmdbController } from "../controllers/tmdb.controller.ts";
 import { createAuthMiddleware } from "../middlewares/auth.middleware.ts";
+import { createMetricsContext } from "../metrics/prometheus.metrics.ts";
 import { errorMiddleware } from "../middlewares/error.middleware.ts";
 import { createAdminRouter } from "./admin.router.ts";
 import { createDislikesRouter } from "./dislikes.router.ts";
@@ -60,8 +61,10 @@ export function createApp(
   const catalogController = new CatalogController(deps.catalogUseCase);
   const playbackController = new PlaybackController(deps.playbackUseCase);
   const tmdbController = new TmdbController(deps.tmdbUseCase);
+  const metrics = createMetricsContext(deps.checkDatabaseHealth);
 
   app.disable("x-powered-by");
+  app.use(metrics.middleware);
 
   app.use((_req: Request, res: Response, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -128,12 +131,14 @@ export function createApp(
       if (deps.checkDatabaseHealth) {
         await deps.checkDatabaseHealth();
       }
+      metrics.setDatabaseUp(true);
       res.status(200).json({
         status: "ready",
         database: "up",
         ...metadata,
       });
     } catch {
+      metrics.setDatabaseUp(false);
       res.status(503).json({
         status: "not_ready",
         database: "down",
@@ -141,6 +146,8 @@ export function createApp(
       });
     }
   });
+
+  app.get("/metrics", metrics.handler);
 
   app.get(DEFAULT_AVATAR_PATH, (_req: Request, res: Response) => {
     res
