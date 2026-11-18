@@ -10,7 +10,7 @@ resources:
 images:
   - name: kevinmateog/flix-backend
     newName: kevinmateog/flix-backend
-    newTag: sha-f7239bb
+    newTag: sha-72424f1
   - name: kevinmateog/flix-frontend
     newName: kevinmateog/flix-frontend
-    newTag: sha-f7239bb
+    newTag: sha-72424f1
