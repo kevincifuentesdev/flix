@@ -504,7 +504,12 @@ kubectl get pods,svc,deploy,pvc -n flix
 
 # 4. Exponer el frontend hacia el navegador (Next.js proxea /api/* internamente hacia flix-backend:3000)
 kubectl port-forward -n flix svc/flix-frontend 5173:5173
+
+# 5. Exponer Grafana para ver el dashboard de métricas pre-cargado
+kubectl port-forward -n flix svc/flix-grafana 3001:3000
 ```
+
+> **Grafana y Prometheus:** [k8s/base/monitoring.yaml](k8s/base/monitoring.yaml) despliega Prometheus haciendo scrape de `GET /metrics` en `flix-backend:3000` y Grafana con datasource y dashboard (`Flix Backend & Database Observability`) pre-cargados en `http://localhost:3001` (acceso anónimo de solo lectura habilitado para demo).
 
 ### Comandos de observabilidad y diagnóstico
 

@@ -824,6 +824,13 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
       assert.equal(readinessBody.status, "ready");
       assert.equal(readinessBody.database, "up");
       assert.equal(readinessBody.service, "flix-backend");
+
+      const metricsRes = await fetch(`${baseUrl}/metrics`);
+      assert.equal(metricsRes.status, 200);
+      const metricsText = await metricsRes.text();
+      assert.equal(metricsText.includes("flix_http_requests_total"), true);
+      assert.equal(metricsText.includes("flix_http_request_duration_seconds"), true);
+      assert.equal(metricsText.includes("flix_database_up 1"), true);
     });
 
     await withTestServer(

@@ -6,6 +6,7 @@ resources:
   - base/postgres.yaml
   - base/backend.yaml
   - base/frontend.yaml
+  - base/monitoring.yaml
 images:
   - name: kevinmateog/flix-backend
     newName: kevinmateog/flix-backend
