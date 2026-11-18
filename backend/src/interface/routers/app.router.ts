@@ -46,6 +46,7 @@ export interface AppDependencies {
   playbackUseCase: PlaybackUseCase;
   tmdbUseCase: TmdbUseCase;
   adminUseCase?: AdminUseCase;
+  checkDatabaseHealth?: () => Promise<void>;
 }
 
 export function createApp(
@@ -114,6 +115,31 @@ export function createApp(
       commitSha: process.env.GIT_COMMIT_SHA || "dev",
       buildNumber: process.env.BUILD_NUMBER || "local",
     });
+  });
+
+  app.get("/ready", async (_req: Request, res: Response) => {
+    const metadata = {
+      service: "flix-backend",
+      commitSha: process.env.GIT_COMMIT_SHA || "dev",
+      buildNumber: process.env.BUILD_NUMBER || "local",
+    };
+
+    try {
+      if (deps.checkDatabaseHealth) {
+        await deps.checkDatabaseHealth();
+      }
+      res.status(200).json({
+        status: "ready",
+        database: "up",
+        ...metadata,
+      });
+    } catch {
+      res.status(503).json({
+        status: "not_ready",
+        database: "down",
+        ...metadata,
+      });
+    }
   });
 
   app.get(DEFAULT_AVATAR_PATH, (_req: Request, res: Response) => {

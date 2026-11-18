@@ -12,6 +12,7 @@ import {
   authHandler,
   BetterAuthSessionAdapter,
 } from "./infrastructure/auth/better-auth.ts";
+import { pgsql } from "./infrastructure/repository/client.ts";
 import { DrizzleLibraryRepository } from "./infrastructure/repository/drizzle-library.repository.ts";
 import { DrizzlePlayableContentRepository } from "./infrastructure/repository/drizzle-playable-content.repository.ts";
 import { DrizzleProfileRepository } from "./infrastructure/repository/drizzle-profile.repository.ts";
@@ -44,6 +45,9 @@ export const app = createApp(
     playbackUseCase: new PlaybackUseCase(playableContentRepository, muxService),
     tmdbUseCase: new TmdbUseCase(tmdbService, playableContentRepository),
     adminUseCase: new AdminUseCase(userRepository),
+    checkDatabaseHealth: async () => {
+      await pgsql.query("SELECT 1");
+    },
   },
   express(),
 );

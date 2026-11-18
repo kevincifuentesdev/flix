@@ -599,7 +599,9 @@ class InMemoryPlayableContentRepository implements PlayableContentRepository {
   }
 }
 
-function createTestHarness() {
+function createTestHarness(options?: {
+  checkDatabaseHealth?: () => Promise<void>;
+}) {
   const testUser: User = {
     id: "user_1",
     name: "Test User",
@@ -754,28 +756,40 @@ function createTestHarness() {
     ),
     tmdbUseCase: new TmdbUseCase(tmdbGateway, playableContentRepository),
     adminUseCase: new AdminUseCase(userRepository),
+    checkDatabaseHealth: options?.checkDatabaseHealth,
   });
 
   return { app, watchHistoryRepository };
 }
 
-describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
-  test("Health, Auth (401/403), Profile, Library CRUD, History CRUD, Paginated Catalog CRUD, Playback, and TMDB contracts", async () => {
-    const { app } = createTestHarness();
-    const server = app.listen(0);
-    const { port } = server.address() as AddressInfo;
-    const baseUrl = `http://127.0.0.1:${port}`;
-    const authHeaders = {
-      Authorization: "Bearer valid-token",
-      "Content-Type": "application/json",
-    };
-    const adminHeaders = {
-      Authorization: "Bearer admin-token",
-      "Content-Type": "application/json",
-    };
+const AUTH_HEADERS = {
+  Authorization: "Bearer valid-token",
+  "Content-Type": "application/json",
+};
 
-    try {
-      // 1. Health check and build traceability metadata
+const ADMIN_HEADERS = {
+  Authorization: "Bearer admin-token",
+  "Content-Type": "application/json",
+};
+
+async function withTestServer(
+  fn: (baseUrl: string) => Promise<void>,
+  options?: { checkDatabaseHealth?: () => Promise<void> },
+) {
+  const { app } = createTestHarness(options);
+  const server = app.listen(0);
+  const { port } = server.address() as AddressInfo;
+  const baseUrl = `http://127.0.0.1:${port}`;
+  try {
+    await fn(baseUrl);
+  } finally {
+    server.close();
+  }
+}
+
+describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
+  test("Health and Readiness: /, /health, and /ready (healthy and 503 when DB is down)", async () => {
+    await withTestServer(async (baseUrl) => {
       const healthRes = await fetch(`${baseUrl}/`);
       assert.equal(healthRes.status, 200);
       assert.equal(await healthRes.text(), "Flix Backend OK");
@@ -787,27 +801,62 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
       );
       assert.equal(healthRes.headers.get("x-powered-by"), null);
 
-      const readinessRes = await fetch(`${baseUrl}/health`);
-      assert.equal(readinessRes.status, 200);
-      const readinessBody = (await readinessRes.json()) as {
+      const livenessRes = await fetch(`${baseUrl}/health`);
+      assert.equal(livenessRes.status, 200);
+      const livenessBody = (await livenessRes.json()) as {
         status: string;
         service: string;
         commitSha: string;
         buildNumber: string;
       };
-      assert.equal(readinessBody.status, "ok");
-      assert.equal(readinessBody.service, "flix-backend");
-      assert.equal(typeof readinessBody.commitSha, "string");
-      assert.equal(typeof readinessBody.buildNumber, "string");
+      assert.equal(livenessBody.status, "ok");
+      assert.equal(livenessBody.service, "flix-backend");
+      assert.equal(typeof livenessBody.commitSha, "string");
+      assert.equal(typeof livenessBody.buildNumber, "string");
 
-      // 2. Unauthorized guard on protected routes
+      const readinessRes = await fetch(`${baseUrl}/ready`);
+      assert.equal(readinessRes.status, 200);
+      const readinessBody = (await readinessRes.json()) as {
+        status: string;
+        database: string;
+        service: string;
+      };
+      assert.equal(readinessBody.status, "ready");
+      assert.equal(readinessBody.database, "up");
+      assert.equal(readinessBody.service, "flix-backend");
+    });
+
+    await withTestServer(
+      async (baseUrl) => {
+        const failedReadinessRes = await fetch(`${baseUrl}/ready`);
+        assert.equal(failedReadinessRes.status, 503);
+        const failedBody = (await failedReadinessRes.json()) as {
+          status: string;
+          database: string;
+        };
+        assert.equal(failedBody.status, "not_ready");
+        assert.equal(failedBody.database, "down");
+      },
+      {
+        checkDatabaseHealth: async () => {
+          throw new Error("connection refused");
+        },
+      },
+    );
+  });
+
+  test("Auth guard: unauthenticated request to protected route returns 401", async () => {
+    await withTestServer(async (baseUrl) => {
       const unauthRes = await fetch(`${baseUrl}/api/profile/me`);
       assert.equal(unauthRes.status, 401);
       assert.deepEqual(await unauthRes.json(), { error: "Unauthorized" });
+    });
+  });
 
-      // 3. Profile contracts
+  test("Profile: /me, /region, and /settings validation and updates", async () => {
+    await withTestServer(async (baseUrl) => {
       const profileMeRes = await fetch(`${baseUrl}/api/profile/me`, {
-        headers: authHeaders,
+        headers: AUTH_HEADERS,
       });
       assert.equal(profileMeRes.status, 200);
       const profileData = (await profileMeRes.json()) as Profile;
@@ -816,7 +865,7 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
 
       const updateRegionRes = await fetch(`${baseUrl}/api/profile/region`, {
         method: "PATCH",
-        headers: authHeaders,
+        headers: AUTH_HEADERS,
         body: JSON.stringify({ region: "MX" }),
       });
       assert.equal(updateRegionRes.status, 200);
@@ -824,7 +873,7 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
 
       const invalidSettingsRes = await fetch(`${baseUrl}/api/profile/settings`, {
         method: "PATCH",
-        headers: authHeaders,
+        headers: AUTH_HEADERS,
         body: JSON.stringify({}),
       });
       assert.equal(invalidSettingsRes.status, 400);
@@ -834,18 +883,21 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
 
       const validSettingsRes = await fetch(`${baseUrl}/api/profile/settings`, {
         method: "PATCH",
-        headers: authHeaders,
+        headers: AUTH_HEADERS,
         body: JSON.stringify({ language: "es-ES", isKids: true }),
       });
       assert.equal(validSettingsRes.status, 200);
       const updatedProfile = (await validSettingsRes.json()) as Profile;
       assert.equal(updatedProfile.language, "es-ES");
       assert.equal(updatedProfile.isKids, true);
+    });
+  });
 
-      // 4. Library (my-list & dislikes) CRUD + logical delete contracts
+  test("Library: my-list CRUD with soft-delete and dislikes toggle/check", async () => {
+    await withTestServer(async (baseUrl) => {
       const toggleAddRes = await fetch(`${baseUrl}/api/my-list/toggle`, {
         method: "POST",
-        headers: authHeaders,
+        headers: AUTH_HEADERS,
         body: JSON.stringify({ tmdbId: 157336, mediaType: "movie" }),
       });
       assert.equal(toggleAddRes.status, 200);
@@ -853,13 +905,13 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
 
       const checkListRes = await fetch(
         `${baseUrl}/api/my-list/check?tmdbId=157336&mediaType=movie`,
-        { headers: authHeaders },
+        { headers: AUTH_HEADERS },
       );
       assert.equal(checkListRes.status, 200);
       assert.deepEqual(await checkListRes.json(), { inList: true });
 
       const listRes = await fetch(`${baseUrl}/api/my-list`, {
-        headers: authHeaders,
+        headers: AUTH_HEADERS,
       });
       const listItems = (await listRes.json()) as LibraryItem[];
       assert.equal(listItems.length, 1);
@@ -868,7 +920,7 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
         `${baseUrl}/api/my-list/${listItems[0].id}`,
         {
           method: "PATCH",
-          headers: authHeaders,
+          headers: AUTH_HEADERS,
           body: JSON.stringify({ mediaType: "tv" }),
         },
       );
@@ -877,19 +929,19 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
 
       const deleteListRes = await fetch(
         `${baseUrl}/api/my-list/${listItems[0].id}`,
-        { method: "DELETE", headers: authHeaders },
+        { method: "DELETE", headers: AUTH_HEADERS },
       );
       assert.equal(deleteListRes.status, 200);
       assert.deepEqual(await deleteListRes.json(), { success: true });
 
       const listAfterSoftDeleteRes = await fetch(`${baseUrl}/api/my-list`, {
-        headers: authHeaders,
+        headers: AUTH_HEADERS,
       });
       assert.equal(((await listAfterSoftDeleteRes.json()) as LibraryItem[]).length, 0);
 
       const dislikeToggleRes = await fetch(`${baseUrl}/api/dislikes/toggle`, {
         method: "POST",
-        headers: authHeaders,
+        headers: AUTH_HEADERS,
         body: JSON.stringify({ tmdbId: 157336, mediaType: "movie" }),
       });
       assert.equal(dislikeToggleRes.status, 200);
@@ -897,17 +949,20 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
 
       const dislikeCheckRes = await fetch(
         `${baseUrl}/api/dislikes/check?tmdbId=157336&mediaType=movie`,
-        { headers: authHeaders },
+        { headers: AUTH_HEADERS },
       );
       assert.equal(dislikeCheckRes.status, 200);
       assert.deepEqual(await dislikeCheckRes.json(), { disliked: true });
+    });
+  });
 
-      // 5. Watch History CRUD + 90% completion rule + logical delete
+  test("Watch History: progress update, 90% completion rule, patch, and soft-delete", async () => {
+    await withTestServer(async (baseUrl) => {
       const progressRes = await fetch(
         `${baseUrl}/api/watch-history/update-progress`,
         {
           method: "POST",
-          headers: authHeaders,
+          headers: AUTH_HEADERS,
           body: JSON.stringify({
             tmdbId: 157336,
             mediaType: "movie",
@@ -921,7 +976,7 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
       assert.deepEqual(await progressRes.json(), { success: true });
 
       const continueWatchingRes = await fetch(`${baseUrl}/api/watch-history`, {
-        headers: authHeaders,
+        headers: AUTH_HEADERS,
       });
       const continueItems = (await continueWatchingRes.json()) as WatchHistoryItem[];
       assert.equal(continueItems.length, 1);
@@ -931,7 +986,7 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
         `${baseUrl}/api/watch-history/${continueItems[0].id}`,
         {
           method: "PATCH",
-          headers: authHeaders,
+          headers: AUTH_HEADERS,
           body: JSON.stringify({ title: "Interstellar (IMAX)" }),
         },
       );
@@ -944,7 +999,7 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
       // Update to >= 90% (900 / 1000) -> completed: true -> excluded from continue watching
       await fetch(`${baseUrl}/api/watch-history/update-progress`, {
         method: "POST",
-        headers: authHeaders,
+        headers: AUTH_HEADERS,
         body: JSON.stringify({
           tmdbId: 157336,
           mediaType: "movie",
@@ -954,19 +1009,22 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
         }),
       });
       const afterCompleteRes = await fetch(`${baseUrl}/api/watch-history`, {
-        headers: authHeaders,
+        headers: AUTH_HEADERS,
       });
       assert.equal(((await afterCompleteRes.json()) as WatchHistoryItem[]).length, 0);
 
       // Soft delete watch history item
       const deleteHistoryRes = await fetch(
         `${baseUrl}/api/watch-history/${continueItems[0].id}`,
-        { method: "DELETE", headers: authHeaders },
+        { method: "DELETE", headers: AUTH_HEADERS },
       );
       assert.equal(deleteHistoryRes.status, 200);
       assert.deepEqual(await deleteHistoryRes.json(), { success: true });
+    });
+  });
 
-      // 6. Catalog Pagination, Role Protection (403), CRUD & Playback contracts
+  test("Catalog & Playback: pagination, role guard (403), admin CRUD, soft-delete hiding, and stream URL", async () => {
+    await withTestServer(async (baseUrl) => {
       const moviesRes = await fetch(`${baseUrl}/api/movies?region=US&page=1&limit=10`);
       assert.equal(moviesRes.status, 200);
       const moviesPage =
@@ -985,7 +1043,7 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
       // Role guard: user gets 403 Forbidden on admin mutation
       const forbiddenMovieCreateRes = await fetch(`${baseUrl}/api/movies`, {
         method: "POST",
-        headers: authHeaders,
+        headers: AUTH_HEADERS,
         body: JSON.stringify({
           tmdbId: 27205,
           muxPlaybackId: "mux_inception_id",
@@ -1000,7 +1058,7 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
       // Admin can create, update, and soft-delete playable content
       const adminCreateMovieRes = await fetch(`${baseUrl}/api/movies`, {
         method: "POST",
-        headers: adminHeaders,
+        headers: ADMIN_HEADERS,
         body: JSON.stringify({
           tmdbId: 27205,
           muxPlaybackId: "mux_inception_id",
@@ -1011,7 +1069,7 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
 
       const adminUpdateMovieRes = await fetch(`${baseUrl}/api/movies/27205`, {
         method: "PATCH",
-        headers: adminHeaders,
+        headers: ADMIN_HEADERS,
         body: JSON.stringify({ muxPlaybackId: "mux_inception_updated" }),
       });
       assert.equal(adminUpdateMovieRes.status, 200);
@@ -1031,7 +1089,7 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
 
       const adminDeleteMovieRes = await fetch(`${baseUrl}/api/movies/27205`, {
         method: "DELETE",
-        headers: adminHeaders,
+        headers: ADMIN_HEADERS,
       });
       assert.equal(adminDeleteMovieRes.status, 200);
       assert.deepEqual(await adminDeleteMovieRes.json(), { success: true });
@@ -1064,8 +1122,26 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
 
       const missingStreamRes = await fetch(`${baseUrl}/api/movies/999999/stream`);
       assert.equal(missingStreamRes.status, 404);
+    });
+  });
 
-      // 7. TMDB contracts
+  test("TMDB: search, discover, deactivated movie hiding, movie/tv details, and 404", async () => {
+    await withTestServer(async (baseUrl) => {
+      // Soft-delete movie 27205 first to verify TMDB endpoints hide deactivated items
+      await fetch(`${baseUrl}/api/movies`, {
+        method: "POST",
+        headers: ADMIN_HEADERS,
+        body: JSON.stringify({
+          tmdbId: 27205,
+          muxPlaybackId: "mux_inception_id",
+          availableRegions: ["US"],
+        }),
+      });
+      await fetch(`${baseUrl}/api/movies/27205`, {
+        method: "DELETE",
+        headers: ADMIN_HEADERS,
+      });
+
       const shortSearchRes = await fetch(`${baseUrl}/api/tmdb/search?q=a`);
       assert.equal(shortSearchRes.status, 200);
       assert.deepEqual(await shortSearchRes.json(), { results: [] });
@@ -1080,7 +1156,6 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
       assert.equal(validSearchData.results.some((r) => r.id === 27205), false);
       assert.equal(validSearchData.results.some((r) => r.id === 157336), true);
 
-      // Discover (genre browsing) also hides deactivated movies
       const discoverRes = await fetch(
         `${baseUrl}/api/tmdb/discover?genre=28&region=US`,
       );
@@ -1096,7 +1171,6 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
       );
       assert.equal(invalidDiscoverRes.status, 400);
 
-      // Detail of a deactivated movie is no longer reachable
       const deactivatedDetailRes = await fetch(`${baseUrl}/api/tmdb/movie/27205`);
       assert.equal(deactivatedDetailRes.status, 404);
 
@@ -1116,25 +1190,28 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
 
       const detailsNotFoundRes = await fetch(`${baseUrl}/api/tmdb/details/40404`);
       assert.equal(detailsNotFoundRes.status, 404);
+    });
+  });
 
-      // 8. Admin routes (/api/admin/ping, /api/admin/users, /api/admin/movies)
+  test("Admin: ping role guards, users pagination, self-delete guard, user update, soft-delete, and movies list", async () => {
+    await withTestServer(async (baseUrl) => {
       const unauthAdminPing = await fetch(`${baseUrl}/api/admin/ping`);
       assert.equal(unauthAdminPing.status, 401);
 
       const userAdminPing = await fetch(`${baseUrl}/api/admin/ping`, {
-        headers: authHeaders,
+        headers: AUTH_HEADERS,
       });
       assert.equal(userAdminPing.status, 403);
 
       const adminPingRes = await fetch(`${baseUrl}/api/admin/ping`, {
-        headers: adminHeaders,
+        headers: ADMIN_HEADERS,
       });
       assert.equal(adminPingRes.status, 200);
       assert.deepEqual(await adminPingRes.json(), { ok: true, role: "admin" });
 
       const adminUsersRes = await fetch(
         `${baseUrl}/api/admin/users?page=1&limit=10`,
-        { headers: adminHeaders },
+        { headers: ADMIN_HEADERS },
       );
       assert.equal(adminUsersRes.status, 200);
       const adminUsersPage =
@@ -1145,14 +1222,14 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
       // Self-deactivation guard for admin
       const selfDeleteRes = await fetch(`${baseUrl}/api/admin/users/admin_1`, {
         method: "DELETE",
-        headers: adminHeaders,
+        headers: ADMIN_HEADERS,
       });
       assert.equal(selfDeleteRes.status, 400);
 
       // Admin updates user_1 data and profile preferences
       const updateUserRes = await fetch(`${baseUrl}/api/admin/users/user_1`, {
         method: "PATCH",
-        headers: adminHeaders,
+        headers: ADMIN_HEADERS,
         body: JSON.stringify({
           name: "Updated User One",
           region: "CO",
@@ -1168,28 +1245,40 @@ describe("Flix Backend Clean Architecture Contracts & Smoke Tests", () => {
       // Admin logically deletes user_1
       const deleteUserRes = await fetch(`${baseUrl}/api/admin/users/user_1`, {
         method: "DELETE",
-        headers: adminHeaders,
+        headers: ADMIN_HEADERS,
       });
       assert.equal(deleteUserRes.status, 200);
       assert.deepEqual(await deleteUserRes.json(), { success: true });
 
       // Deactivated user is rejected on protected routes
       const deactivatedProfileRes = await fetch(`${baseUrl}/api/profile/me`, {
-        headers: authHeaders,
+        headers: AUTH_HEADERS,
       });
       assert.equal(deactivatedProfileRes.status, 403);
 
-      // Admin can inspect all movies including logically deleted ones
+      // Soft-delete movie 27205 so admin movies list sees both active and inactive
+      await fetch(`${baseUrl}/api/movies`, {
+        method: "POST",
+        headers: ADMIN_HEADERS,
+        body: JSON.stringify({
+          tmdbId: 27205,
+          muxPlaybackId: "mux_inception_id",
+          availableRegions: ["US"],
+        }),
+      });
+      await fetch(`${baseUrl}/api/movies/27205`, {
+        method: "DELETE",
+        headers: ADMIN_HEADERS,
+      });
+
       const adminMoviesAllRes = await fetch(
         `${baseUrl}/api/admin/movies?status=all&page=1&limit=10`,
-        { headers: adminHeaders },
+        { headers: ADMIN_HEADERS },
       );
       assert.equal(adminMoviesAllRes.status, 200);
       const adminMoviesAllPage =
         (await adminMoviesAllRes.json()) as StandardPaginatedResponse<PlayableContent>;
       assert.equal(adminMoviesAllPage.data.length, 2);
-    } finally {
-      server.close();
-    }
+    });
   });
 });
