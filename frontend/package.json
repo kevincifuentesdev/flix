@@ -12,6 +12,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "playwright test",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:e2e": "playwright test --config=playwright.e2e.config.js"
