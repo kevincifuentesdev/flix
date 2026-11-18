@@ -15,7 +15,7 @@ test('register page is available', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
   await expect(page.getByLabel('Email')).toBeVisible();
   await expect(page.getByLabel('Password', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: /create account/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Sign Up' })).toBeVisible();
 });
 
 test('landing page renders FLIX brand and navigation', async ({ page }) => {
