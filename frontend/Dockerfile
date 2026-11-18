@@ -9,9 +9,9 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-ARG BACKEND=http://host.docker.internal:3000
+# BACKEND ya no se fija en build: se define en runtime (ConfigMap de K8s).
+# Las NEXT_PUBLIC_* si quedan congeladas en build.
 ARG NEXT_PUBLIC_URL=http://localhost:5173
-ENV BACKEND=$BACKEND
 ENV NEXT_PUBLIC_URL=$NEXT_PUBLIC_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 
@@ -32,13 +32,15 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=5173
 ENV HOSTNAME=0.0.0.0
+# Valor por defecto; en Kubernetes lo sobrescribe el ConfigMap.
+ENV BACKEND=http://flix-backend:3000
 ENV GIT_COMMIT_SHA=${GIT_COMMIT_SHA}
 ENV BUILD_NUMBER=${BUILD_NUMBER}
 
 RUN addgroup --system --gid 1001 nodejs \
  && adduser --system --uid 1001 nextjs
 
-COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 

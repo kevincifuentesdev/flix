@@ -22,13 +22,15 @@ ENV GIT_COMMIT_SHA=${GIT_COMMIT_SHA}
 ENV BUILD_NUMBER=${BUILD_NUMBER}
 
 COPY package.json package-lock.json ./
-# Keep devDependencies installed so migrate-if-needed.mjs can invoke drizzle-kit at startup.
-RUN npm ci
+# Solo dependencias de produccion. drizzle-kit esta en "dependencies"
+# porque migrate-if-needed.mjs lo invoca al arrancar el contenedor.
+RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --from=builder --chown=node:node /app/drizzle.config.ts ./drizzle.config.ts
 COPY --from=builder --chown=node:node /app/drizzle ./drizzle
 COPY --from=builder --chown=node:node /app/scripts ./scripts
+RUN chown node:node /app
 
 USER node
 EXPOSE 3000
