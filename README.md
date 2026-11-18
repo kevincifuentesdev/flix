@@ -26,6 +26,7 @@ Repositorio unificado (monorepo) de la plataforma de streaming **Flix**. Central
 12. [Trazabilidad de entrega y GitOps (De Commit a Pod)](#12-trazabilidad-de-entrega-y-gitops-de-commit-a-pod)
 13. [Configuración, seguridad y manejo de secretos](#13-configuración-seguridad-y-manejo-de-secretos)
 14. [Documentación de la API](#14-documentación-de-la-api)
+15. [Despliegue en Minikube, Observabilidad y Runbook de Diagnóstico](#15-despliegue-en-minikube-observabilidad-y-runbook-de-diagnóstico)
 
 ---
 
@@ -481,3 +482,73 @@ El backend expone documentación OpenAPI 3.0 en los siguientes puntos:
 - Especificación JSON dinámica: `http://localhost:3000/api-docs.json`
 - Archivo OpenAPI estático: [backend/api-docs/openapi.json](backend/api-docs/openapi.json)
 - Referencia de endpoints en Markdown: [backend/api-docs/README.md](backend/api-docs/README.md)
+
+---
+
+## 15. Despliegue en Minikube, Observabilidad y Runbook de Diagnóstico
+
+### Arranque y despliegue reproducible en el clúster
+
+```bash
+# 1. Verificar clúster y contexto activo
+minikube start --driver=docker
+minikube status
+kubectl config current-context
+
+# 2. Aplicar secretos desde .env locales (sin exponer valores) y desplegar manifiestos
+./scripts/sync-k8s-secrets.sh --apply
+kubectl apply -k k8s/
+
+# 3. Verificar que todos los Pods, Services, Deployments y PVC estén saludables
+kubectl get pods,svc,deploy,pvc -n flix
+
+# 4. Exponer el frontend hacia el navegador (Next.js proxea /api/* internamente hacia flix-backend:3000)
+kubectl port-forward -n flix svc/flix-frontend 5173:5173
+```
+
+### Comandos de observabilidad y diagnóstico
+
+```bash
+# Estado general en tiempo real
+kubectl get pods -n flix -w
+
+# Inspección detallada de un Pod (imagen exacta, probes, recursos y Events)
+kubectl describe pod -l app.kubernetes.io/name=flix-backend -n flix
+
+# Logs recientes de cada componente
+kubectl logs deploy/flix-backend -n flix --tail=50
+kubectl logs deploy/flix-frontend -n flix --tail=50
+kubectl logs statefulset/flix-postgres -n flix --tail=50
+
+# Verificación directa de persistencia en PostgreSQL
+kubectl exec -it statefulset/flix-postgres -n flix -- psql -U flix_user -d flix -c "\dt"
+```
+
+### Probes de salud (`livenessProbe` vs. `readinessProbe`)
+
+| Endpoint | Probe en `k8s/base/backend.yaml` | Qué verifica | Comportamiento ante fallo |
+| :--- | :--- | :--- | :--- |
+| `GET /health` | `livenessProbe` | Proceso Express vivo y metadatos (`commitSha`, `buildNumber`) | Kubernetes reinicia el contenedor si deja de responder. |
+| `GET /ready` | `readinessProbe` | Ejecuta `SELECT 1` contra PostgreSQL (`200` si responde, `503` si cae) | Marca el Pod como `NotReady` (`0/1`) y detiene el tráfico sin matarlo innecesariamente. |
+
+### Ensayos de incidentes controlados (Demo)
+
+1. **Auto-recuperación de Pod (`Deployment`):**
+   ```bash
+   kubectl delete pod -l app.kubernetes.io/name=flix-backend -n flix
+   kubectl get pods -n flix -w
+   ```
+   Kubernetes crea inmediatamente un nuevo Pod para mantener `replicas: 1`.
+
+2. **Caída temporal de PostgreSQL y `readinessProbe`:**
+   ```bash
+   # Simular caída de la BD
+   kubectl scale statefulset/flix-postgres --replicas=0 -n flix
+   kubectl get pods -n flix
+   # flix-backend pasa a 0/1 Running (NotReady) sin reiniciar el proceso
+
+   # Restaurar la BD (el PVC conserva los datos)
+   kubectl scale statefulset/flix-postgres --replicas=1 -n flix
+   kubectl get pods -n flix -w
+   # flix-backend vuelve automáticamente a 1/1 Running
+   ```
