@@ -30,6 +30,14 @@ const trustedOrigins = Array.from(
 
 export const auth = betterAuth({
   trustedOrigins,
+  rateLimit: {
+    window: 10,
+    max: 500,
+    customRules: {
+      "/sign-up/email": { window: 10, max: 100 },
+      "/sign-in/email": { window: 10, max: 100 },
+    },
+  },
   database: drizzleAdapter(db, {
     provider: "pg",
     schema: {
